@@ -1,0 +1,12 @@
+{
+  "name": "stg1",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Chrono Pilot - a Time Pilot inspired free-scrolling shooter",
+  "scripts": {
+    "start": "python3 -m http.server 8080",
+    "build": "node tools/build-standalone.mjs",
+    "test": "node --test \"tests/**/*.test.js\""
+  }
+}

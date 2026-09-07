@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CHRONO PILOT</title>
+<style>
+  :root {
+    --frame: #0b1622;
+    --ink: #cfe3ff;
+    --dim: #6f89a8;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: radial-gradient(circle at 50% 0%, #16263a 0%, #060b12 70%);
+    color: var(--ink);
+    font-family: "Courier New", ui-monospace, monospace;
+  }
+  body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 16px;
+    overscroll-behavior: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #stage {
+    position: relative;
+    line-height: 0;
+    width: min(96vw, calc((100vh - 130px) * 4 / 3));
+    width: min(96vw, calc((100svh - 130px) * 4 / 3));
+    aspect-ratio: 4 / 3;
+    border: 2px solid #24405e;
+    border-radius: 6px;
+    box-shadow: 0 0 0 1px #060b12, 0 18px 40px rgba(0, 0, 0, .6);
+    overflow: hidden;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    image-rendering: auto;
+    background: #0a1a2c;
+    touch-action: none;
+  }
+  footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 22px;
+    justify-content: center;
+    font-size: 12px;
+    letter-spacing: .06em;
+    color: var(--dim);
+  }
+  footer b { color: var(--ink); font-weight: 700; }
+  footer .hint { color: #4f637d; }
+  footer.touch { display: none; }
+
+  /* Touch devices get the on-screen controls, so the key list is dead weight
+     and the vertical space is better spent on the game itself. */
+  @media (pointer: coarse) {
+    body { padding: 0; gap: 0; overflow: hidden; }
+    /* The play area takes the whole screen and the game reshapes to fit it. */
+    #stage {
+      border: 0;
+      border-radius: 0;
+      box-shadow: none;
+      width: 100vw;
+      height: calc(100vh - 26px);
+      height: calc(100svh - 26px);
+      aspect-ratio: auto;
+    }
+    footer.keys { display: none; }
+    footer.touch {
+      display: flex;
+      gap: 14px;
+      height: 26px;
+      align-items: center;
+      justify-content: center;
+      padding: 0 10px;
+      font-size: 11px;
+      /* One line, always: a wrapped footer would push the page into scrolling. */
+      white-space: nowrap;
+      flex-wrap: nowrap;
+      overflow: hidden;
+    }
+    footer.touch .rotate { display: none; }
+  }
+  @media (pointer: coarse) and (orientation: portrait) {
+    footer.touch .rotate { display: inline; color: #ffd166; }
+  }
+  noscript { color: #ff8f8f; }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="screen" width="960" height="720" aria-label="Chrono Pilot game screen"></canvas>
+  </div>
+  <footer class="keys">
+    <span><b>&#8592;&#8593;&#8595;&#8594; / WASD</b> turn</span>
+    <span><b>SPACE / Z</b> fire</span>
+    <span><b>ENTER</b> start</span>
+    <span><b>P</b> pause</span>
+    <span><b>M</b> mute</span>
+    <span class="hint">画面をクリックしてからキー操作</span>
+  </footer>
+  <footer class="touch">
+    <span>スティックで旋回 ・ <b>FIRE</b> で射撃</span>
+    <span class="rotate">横向き推奨</span>
+  </footer>
+  <noscript>This game requires JavaScript.</noscript>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
