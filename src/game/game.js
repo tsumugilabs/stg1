@@ -7,10 +7,10 @@ import { Enemy } from './enemy.js';
 import { Parachutist } from './parachutist.js';
 import { Player } from './player.js';
 import { drawHud } from './hud.js';
-import { cycleAt, eraAt, ERAS } from './levels.js';
+import { cycleAt, difficultyAt, eraAt, ERAS } from './levels.js';
 
 const HIGH_SCORE_KEY = 'chronopilot.highscore';
-const EXTRA_LIFE_EVERY = 50000;
+const EXTRA_LIFE_EVERY = 30000;
 const RESCUE_BONUS = [500, 1000, 2000, 4000, 8000];
 
 function readHighScore() {
@@ -82,7 +82,7 @@ export class Game {
   }
 
   get difficulty() {
-    return 1 + cycleAt(this.eraIndex) * 0.18;
+    return difficultyAt(this.eraIndex);
   }
 
   // --- run / era lifecycle -------------------------------------------------
@@ -105,7 +105,7 @@ export class Game {
     this.parachutists.length = 0;
     this.boss = null;
     this.effects.clear();
-    this.spawnTimer = 1.6;
+    this.spawnTimer = randRange(...era.spawnInterval);
     this.parachuteTimer = randRange(6, 12);
     this.rescueChain = 0;
     this.player.reset(0, 0);
@@ -278,9 +278,11 @@ export class Game {
       return;
     }
     this.rescueChain = 0;
-    // Clear the immediate area so the player is not shot the instant they return.
+    // Clear the immediate area, and hold off the next wave, so the player is
+    // not straight back into the fight the instant the shield drops.
     this.bullets = this.bullets.filter((b) => b.team !== 'enemy');
-    this.enemies = this.enemies.filter((e) => distance(e.x, e.y, this.player.x, this.player.y) > 220);
+    this.enemies = this.enemies.filter((e) => distance(e.x, e.y, this.player.x, this.player.y) > 300);
+    this.spawnTimer = Math.max(this.spawnTimer, 2.2);
     this.player.reset(this.player.x, this.player.y);
     this.state = 'playing';
   }
@@ -320,10 +322,11 @@ export class Game {
     if (this.boss) return;
 
     this.spawnTimer -= dt;
-    const cap = Math.min(this.era.maxEnemies + cycleAt(this.eraIndex), 8);
+    const era = this.era;
+    const cap = Math.min(era.maxEnemies + cycleAt(this.eraIndex), 8);
     if (this.spawnTimer <= 0 && this.enemies.length < cap) {
-      this.spawnTimer = randRange(1.0, 2.1) / this.difficulty;
-      this.spawnSquadron(Math.random() < 0.35 ? 2 : 1);
+      this.spawnTimer = randRange(...era.spawnInterval) / this.difficulty;
+      this.spawnSquadron(Math.random() < era.squadronChance ? 2 : 1);
     }
 
     if (this.kills >= this.quota) this.spawnBoss();

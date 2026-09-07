@@ -1,10 +1,10 @@
 import { turnToward, wrapAngle } from '../core/math.js';
 import { drawPlayer } from '../render/sprites.js';
 
-const SPEED = 178;
-const TURN_RATE = 3.6;
-const FIRE_COOLDOWN = 0.2;
-const MAX_SHOTS = 6;
+export const PLAYER_SPEED = 178;
+export const PLAYER_TURN_RATE = 3.6;
+const FIRE_COOLDOWN = 0.18;
+const MAX_SHOTS = 8;
 
 /**
  * The player's craft. It always sits at the centre of the screen — the world
@@ -12,7 +12,9 @@ const MAX_SHOTS = 6;
  */
 export class Player {
   constructor() {
-    this.radius = 13;
+    // Deliberately much smaller than the sprite: near misses should read as
+    // near misses, not deaths.
+    this.radius = 8;
     this.reset(0, 0);
   }
 
@@ -30,10 +32,10 @@ export class Player {
 
     const dir = input.direction();
     if (dir) {
-      this.angle = turnToward(this.angle, Math.atan2(dir.y, dir.x), TURN_RATE * dt);
+      this.angle = turnToward(this.angle, Math.atan2(dir.y, dir.x), PLAYER_TURN_RATE * dt);
     }
-    this.x += Math.cos(this.angle) * SPEED * dt;
-    this.y += Math.sin(this.angle) * SPEED * dt;
+    this.x += Math.cos(this.angle) * PLAYER_SPEED * dt;
+    this.y += Math.sin(this.angle) * PLAYER_SPEED * dt;
 
     this.fireTimer -= dt;
     if (this.invulnerable > 0) this.invulnerable -= dt;

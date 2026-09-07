@@ -13,12 +13,12 @@ export class Boss {
     this.era = era;
     this.kind = era.boss;
     this.radius = 48;
-    this.speed = 74 * Math.min(difficulty, 1.5);
-    this.turnRate = 0.62 * Math.min(difficulty, 1.6);
+    this.speed = era.bossSpeed * Math.min(difficulty, 1.5);
+    this.turnRate = era.bossTurn * Math.min(difficulty, 1.6);
     this.maxHp = Math.round(era.bossHp * difficulty);
     this.hp = this.maxHp;
-    this.fireTimer = 1.6;
-    this.escortTimer = 5;
+    this.fireTimer = era.bossFire[1];
+    this.escortTimer = era.bossEscorts ? era.bossEscorts[0] : Infinity;
     this.hitFlash = 0;
     this.score = 5000;
     this.dead = false;
@@ -43,17 +43,20 @@ export class Boss {
     this.fireTimer -= dt;
     const range = distance(this.x, this.y, player.x, player.y);
     if (this.fireTimer <= 0 && player.alive && range < 700) {
-      this.fireTimer = randRange(1.1, 1.9);
-      const spread = Math.abs(angleDiff(this.angle, toPlayer)) < 1.0 ? this.angle : toPlayer;
-      for (const offset of [-0.22, 0, 0.22]) {
-        game.fireEnemyBullet(this.x, this.y, spread + offset, this.era.bulletSpeed * 0.95);
+      this.fireTimer = randRange(...this.era.bossFire);
+      const aim = Math.abs(angleDiff(this.angle, toPlayer)) < 1.0 ? this.angle : toPlayer;
+      const offsets = this.era.bossShots > 1 ? [-0.22, 0, 0.22] : [0];
+      for (const offset of offsets) {
+        game.fireEnemyBullet(this.x, this.y, aim + offset, this.era.bulletSpeed * 0.95);
       }
     }
 
-    this.escortTimer -= dt;
-    if (this.escortTimer <= 0) {
-      this.escortTimer = randRange(5, 8);
-      game.spawnEscorts(2);
+    if (this.era.bossEscorts) {
+      this.escortTimer -= dt;
+      if (this.escortTimer <= 0) {
+        this.escortTimer = randRange(...this.era.bossEscorts);
+        game.spawnEscorts(2);
+      }
     }
   }
 

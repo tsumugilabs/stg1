@@ -37,7 +37,9 @@ export class Enemy {
     this.fireTimer -= dt;
     const range = distance(this.x, this.y, player.x, player.y);
     const aimed = Math.abs(angleDiff(this.angle, toPlayer)) < 0.4;
-    if (this.fireTimer <= 0 && aimed && range < 520 && player.alive) {
+    // The near limit matters: a shot fired from on top of the player is one
+    // they had no chance to read.
+    if (this.fireTimer <= 0 && aimed && range > 140 && range < 520 && player.alive) {
       this.fireTimer = randRange(...this.era.fireInterval);
       game.fireEnemyBullet(this.x, this.y, this.angle, this.era.bulletSpeed);
     }
