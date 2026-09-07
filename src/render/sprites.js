@@ -19,19 +19,100 @@ function polygon(ctx, points, fill, stroke) {
   }
 }
 
-export function drawPlayer(ctx, { thrust = true, time = 0 } = {}) {
-  if (thrust) {
-    const flicker = 6 + Math.sin(time * 40) * 3;
-    polygon(ctx, [[-13, -3.5], [-13 - flicker, 0], [-13, 3.5]], '#ffb347');
-    polygon(ctx, [[-13, -2], [-13 - flicker * 0.6, 0], [-13, 2]], '#fff2c4');
-  }
-  polygon(ctx, [[-2, -15], [5, -13], [6, 13], [-2, 15]], '#8fb6e0');            // main wing
-  polygon(ctx, [[-13, -8], [-9, -7], [-9, 7], [-13, 8]], '#7aa3d0');            // tailplane
-  polygon(ctx, [[17, 0], [4, 6], [-12, 5], [-14, 0], [-12, -5], [4, -6]], '#e9f2ff'); // fuselage
-  polygon(ctx, [[-6, 0], [-13, -1.5], [-13, 1.5]], '#b9d2ef');                  // fin
+function drawExhaust(ctx, x, length, colors) {
+  const inner = length * 0.6;
+  polygon(ctx, [[x, -3.5], [x - length, 0], [x, 3.5]], colors.accent);
+  polygon(ctx, [[x, -2], [x - inner, 0], [x, 2]], '#fff2c4');
+}
+
+function drawViper(ctx, colors) {
+  polygon(ctx, [[-2, -15], [5, -13], [6, 13], [-2, 15]], colors.wing);
+  polygon(ctx, [[-13, -8], [-9, -7], [-9, 7], [-13, 8]], colors.wingAlt);
+  polygon(ctx, [[17, 0], [4, 6], [-12, 5], [-14, 0], [-12, -5], [4, -6]], colors.body);
+  polygon(ctx, [[-6, 0], [-13, -1.5], [-13, 1.5]], colors.wingAlt);
   ctx.beginPath();
   ctx.arc(4, 0, 3, 0, Math.PI * 2);
-  ctx.fillStyle = '#1c3a5c';
+  ctx.fillStyle = colors.glass;
+  ctx.fill();
+}
+
+/** Draken: the double delta, a narrow forward wing over a wide rear one. */
+function drawDragon(ctx, colors) {
+  polygon(ctx, [[8, 0], [-9, -17], [-15, -15], [-9, 0], [-15, 15], [-9, 17]], colors.wing);
+  polygon(ctx, [[14, 0], [1, -8], [-4, -7], [-4, 7], [1, 8]], colors.wingAlt);
+  polygon(ctx, [[19, 0], [7, 4], [-14, 4.5], [-16, 0], [-14, -4.5], [7, -4]], colors.body);
+  polygon(ctx, [[-4, 0], [-15, -2], [-15, 2]], colors.wingAlt);
+  ctx.beginPath();
+  ctx.arc(7, 0, 2.6, 0, Math.PI * 2);
+  ctx.fillStyle = colors.glass;
+  ctx.fill();
+}
+
+/** F-15: broad shoulders, twin canted tails, two engines. */
+function drawEagle(ctx, colors) {
+  polygon(ctx, [[4, -19], [11, -17], [10, 17], [4, 19], [-8, 16], [-5, 0], [-8, -16]], colors.wing);
+  polygon(ctx, [[-9, -13], [-2, -12], [-3, -5], [-10, -6]], colors.wingAlt);
+  polygon(ctx, [[-9, 13], [-2, 12], [-3, 5], [-10, 6]], colors.wingAlt);
+  polygon(ctx, [[19, 0], [8, 5], [-14, 7], [-16, 0], [-14, -7], [8, -5]], colors.body);
+  ctx.fillStyle = colors.wingAlt;
+  ctx.fillRect(-15, -7.5, 5, 5);
+  ctx.fillRect(-15, 2.5, 5, 5);
+  ctx.beginPath();
+  ctx.arc(6, 0, 3.4, 0, Math.PI * 2);
+  ctx.fillStyle = colors.glass;
+  ctx.fill();
+}
+
+/** Super Sylph: canards up front, delta wing, twin canted fins, lit edges. */
+function drawSwind(ctx, colors, time) {
+  polygon(ctx, [[6, 0], [-10, -18], [-16, -16], [-11, 0], [-16, 16], [-10, 18]], colors.wing);
+  polygon(ctx, [[13, -4], [8, -13], [4, -12], [7, -3]], colors.wingAlt);
+  polygon(ctx, [[13, 4], [8, 13], [4, 12], [7, 3]], colors.wingAlt);
+  polygon(ctx, [[-8, -12], [-15, -14], [-17, -7], [-11, -6]], colors.wingAlt);
+  polygon(ctx, [[-8, 12], [-15, 14], [-17, 7], [-11, 6]], colors.wingAlt);
+  polygon(ctx, [[21, 0], [8, 4.5], [-15, 5], [-17, 0], [-15, -5], [8, -4.5]], colors.body);
+  ctx.strokeStyle = colors.accent;
+  ctx.lineWidth = 1.2;
+  ctx.globalAlpha = 0.55 + Math.sin(time * 7) * 0.35;
+  ctx.beginPath();
+  ctx.moveTo(18, -2.4); ctx.lineTo(-13, -3.4);
+  ctx.moveTo(18, 2.4); ctx.lineTo(-13, 3.4);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.beginPath();
+  ctx.arc(8, 0, 3, 0, Math.PI * 2);
+  ctx.fillStyle = colors.glass;
+  ctx.fill();
+}
+
+const CRAFT_SHAPES = {
+  viper: drawViper,
+  dragon: drawDragon,
+  eagle: drawEagle,
+  swind: drawSwind,
+};
+
+/** Draws a player craft, nose along +X. `id` selects the airframe. */
+export function drawPlayer(ctx, { id = 'viper', colors, thrust = true, time = 0 } = {}) {
+  const palette = colors ?? {
+    body: '#e9f2ff', wing: '#8fb6e0', wingAlt: '#7aa3d0', glass: '#1c3a5c', accent: '#ffb347',
+  };
+  if (thrust) {
+    const flicker = 6 + Math.sin(time * 40) * 3;
+    drawExhaust(ctx, id === 'eagle' ? -16 : -15, flicker + 7, palette);
+  }
+  (CRAFT_SHAPES[id] ?? drawViper)(ctx, palette, time);
+}
+
+/** A small drone that flies alongside the S.Wind and fires with it. */
+export function drawPod(ctx, colors, time) {
+  ctx.save();
+  ctx.rotate(time * 3);
+  polygon(ctx, [[7, 0], [-3, -5], [-5, 0], [-3, 5]], colors.wingAlt);
+  ctx.restore();
+  ctx.beginPath();
+  ctx.arc(0, 0, 3.2, 0, Math.PI * 2);
+  ctx.fillStyle = colors.accent;
   ctx.fill();
 }
 

@@ -7,6 +7,8 @@
  * the single source of truth for both drawing and hit testing.
  */
 
+import { centeredText, roundedRect, UI_DIM, UI_INK } from '../render/ui.js';
+
 const DEAD_ZONE = 14;
 
 /**
@@ -28,8 +30,6 @@ function layout(w, h) {
   };
 }
 
-const UI_INK = '#eaf3ff';
-const UI_DIM = '#9fb6d1';
 
 function inCircle(point, circle) {
   return Math.hypot(point.x - circle.x, point.y - circle.y) <= circle.r;
@@ -37,26 +37,6 @@ function inCircle(point, circle) {
 
 function inBox(point, box) {
   return Math.abs(point.x - box.x) <= box.w / 2 && Math.abs(point.y - box.y) <= box.h / 2;
-}
-
-function roundedRect(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
-}
-
-function centeredText(ctx, text, x, y, size, color) {
-  ctx.font = `bold ${size}px "Courier New", monospace`;
-  ctx.fillStyle = color;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(text, x, y);
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
 }
 
 export class TouchControls {
@@ -72,6 +52,15 @@ export class TouchControls {
     this.pauseTapped = false;
     this.tapped = false;
     this.canvas = null;
+    // 'playing' drives the stick and buttons; any other screen just reports
+    // where the finger went and lets the game decide what it hit.
+    this.mode = 'title';
+    this.tapPoint = null;
+    this.holdPoint = null;
+  }
+
+  get holding() {
+    return this.holdPoint !== null;
   }
 
   attach(canvas) {
@@ -105,6 +94,12 @@ export class TouchControls {
       /* the pointer can already be gone; capture is an optimisation, not a need */
     }
     const point = this._point(event);
+    this.tapPoint = point;
+    this.holdPoint = point;
+    if (!this._inCockpit()) {
+      this.tapped = true;
+      return;
+    }
     const ui = this._layout();
 
     if (inCircle(point, ui.pause)) {
@@ -126,7 +121,12 @@ export class TouchControls {
     this.stick = { id: event.pointerId, ox: point.x, oy: point.y, x: point.x, y: point.y };
   }
 
+  _inCockpit() {
+    return this.mode === 'playing' || this.mode === 'paused' || this.mode === 'respawn';
+  }
+
   _move(event) {
+    if (this.holdPoint) this.holdPoint = this._point(event);
     if (!this.stick || this.stick.id !== event.pointerId) return;
     event.preventDefault();
     const point = this._point(event);
@@ -135,6 +135,7 @@ export class TouchControls {
   }
 
   _up(event) {
+    this.holdPoint = null;
     if (this.stick && this.stick.id === event.pointerId) this.stick = null;
     if (this.firePointer === event.pointerId) this.firePointer = null;
   }
@@ -156,10 +157,13 @@ export class TouchControls {
   endFrame() {
     this.pauseTapped = false;
     this.tapped = false;
+    this.tapPoint = null;
   }
 
   draw(ctx, { showSticks }) {
-    if (!this.enabled) return;
+    // Outside the cockpit the game draws its own screens; none of this
+    // chrome belongs on top of them.
+    if (!this.enabled || !this._inCockpit()) return;
     ctx.save();
     const ui = this._layout();
 

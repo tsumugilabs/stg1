@@ -7,9 +7,19 @@ import { Enemy } from './enemy.js';
 import { Parachutist } from './parachutist.js';
 import { Player } from './player.js';
 import { drawHud } from './hud.js';
+import { cardAt, inStart, selectLayout } from './selectscreen.js';
+import { CRAFT, craftIndexById, DEFAULT_CRAFT } from './craft.js';
 import { cycleAt, difficultyAt, eraAt, ERAS } from './levels.js';
 
 const HIGH_SCORE_KEY = 'chronopilot.highscore';
+const CRAFT_KEY = 'chronopilot.craft';
+const UNLOCK_KEY = 'chronopilot.unlocked';
+// Up, up, down, down, left, right, left, right, B, A.
+const CHEAT = [
+  'ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown',
+  'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'KeyB', 'KeyA',
+];
+const CHEAT_HOLD_SECONDS = 3;
 const EXTRA_LIFE_EVERY = 30000;
 const RESCUE_BONUS = [500, 1000, 2000, 4000, 8000];
 
@@ -26,6 +36,22 @@ function writeHighScore(value) {
     localStorage.setItem(HIGH_SCORE_KEY, String(value));
   } catch {
     /* storage can be unavailable in private mode; the score just is not kept */
+  }
+}
+
+function readStored(key, fallback) {
+  try {
+    return localStorage.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStored(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* nothing to do: the choice simply is not remembered next time */
   }
 }
 
@@ -49,6 +75,13 @@ export class Game {
     this.resize();
 
     this.highScore = readHighScore();
+    this.unlocked = readStored(UNLOCK_KEY, '') === '1';
+    this.craftIndex = craftIndexById(readStored(CRAFT_KEY, DEFAULT_CRAFT));
+    if (!this.unlocked && CRAFT[this.craftIndex].hidden) this.craftIndex = 0;
+    this.cheatProgress = 0;
+    this.holdTimer = 0;
+    this.selectBoxes = null;
+    this.unlockFlash = 0;
     this.state = 'title';
     this.time = 0;
     this.banner = '';
@@ -66,6 +99,15 @@ export class Game {
     this.cam.height = this.canvas.height;
     // Enemies must arrive from just beyond whatever the player can actually see.
     this.spawnRadius = Math.hypot(this.canvas.width, this.canvas.height) / 2 + 70;
+  }
+
+  get craft() {
+    return CRAFT[this.craftIndex];
+  }
+
+  /** Craft the select screen may actually start with. */
+  isSelectable(craft) {
+    return !craft.hidden || this.unlocked;
   }
 
   get era() {
@@ -88,8 +130,9 @@ export class Game {
   // --- run / era lifecycle -------------------------------------------------
 
   resetRun() {
+    this.player.setCraft(this.craft.id);
     this.score = 0;
-    this.lives = 3;
+    this.lives = this.craft.lives;
     this.eraIndex = 0;
     this.nextExtraLife = EXTRA_LIFE_EVERY;
     this.rescueChain = 0;
@@ -179,11 +222,56 @@ export class Game {
     this.sfx.eraJump();
   }
 
-  firePlayerBullet(x, y, angle) {
-    this.bullets.push(new Bullet({
-      x, y, angle, speed: 520, life: 0.82, team: 'player', color: '#fff3c4', radius: 3,
-    }));
+  /** One trigger pull: every barrel the craft carries fires together. */
+  firePlayerVolley(x, y, angle) {
+    const craft = this.craft;
+    const sideX = Math.cos(angle + Math.PI / 2);
+    const sideY = Math.sin(angle + Math.PI / 2);
+    for (const barrel of craft.barrels) {
+      this.bullets.push(new Bullet({
+        x: x + Math.cos(angle) * 18 + sideX * barrel.lateral,
+        y: y + Math.sin(angle) * 18 + sideY * barrel.lateral,
+        angle: angle + barrel.offset,
+        speed: craft.bulletSpeed,
+        life: craft.bulletLife,
+        team: 'player',
+        color: craft.bulletColor,
+        radius: craft.bulletRadius,
+        damage: craft.damage,
+        pierce: craft.pierce,
+      }));
+    }
     this.sfx.playerShot();
+  }
+
+  firePodShot(x, y, angle) {
+    const craft = this.craft;
+    this.bullets.push(new Bullet({
+      x, y, angle,
+      speed: craft.bulletSpeed * 0.92,
+      life: craft.bulletLife * 0.8,
+      team: 'player',
+      color: craft.colors.accent,
+      radius: 2.4,
+      damage: craft.damage,
+      pierce: 0,
+    }));
+  }
+
+  /** Closest escort, or the flagship, within `range` of a point. */
+  nearestTarget(x, y, range) {
+    let best = null;
+    let bestDistance = range;
+    for (const enemy of this.enemies) {
+      if (enemy.dead) continue;
+      const d = distance(x, y, enemy.x, enemy.y);
+      if (d < bestDistance) { bestDistance = d; best = enemy; }
+    }
+    if (this.boss) {
+      const d = distance(x, y, this.boss.x, this.boss.y);
+      if (d < bestDistance) best = this.boss;
+    }
+    return best;
   }
 
   fireEnemyBullet(x, y, angle, speed) {
@@ -217,10 +305,12 @@ export class Game {
     if (this.shake > 0) this.shake = Math.max(0, this.shake - dt * 2.6);
     this.background.update(dt);
 
+    if (this.input.touch) this.input.touch.mode = this.state;
     if (this.input.wasPressed('mute')) this.muted = this.sfx.toggleMute();
 
     switch (this.state) {
       case 'title': this.updateTitle(dt); break;
+      case 'select': this.updateSelect(dt); break;
       case 'playing': this.updatePlaying(dt); break;
       case 'paused': this.updatePaused(); break;
       case 'respawn': this.updateRespawn(dt); break;
@@ -237,7 +327,83 @@ export class Game {
     this.player.angle += 0.16 * dt;
     this.player.x += Math.cos(this.player.angle) * 90 * dt;
     this.player.y += Math.sin(this.player.angle) * 90 * dt;
-    if (this.input.wantsStart()) this.startNewGame();
+    this.updateCheat(dt);
+    if (this.input.wantsStart()) {
+      this.state = 'select';
+      this.stateTimer = 0;
+    }
+  }
+
+  /**
+   * Craft select. The hidden slot can be highlighted before it is earned —
+   * seeing that it exists is the point — but it cannot be launched, and
+   * holding it down is the touch equivalent of the keyboard cheat.
+   */
+  updateSelect(dt) {
+    this.player.angle += 0.16 * dt;
+    this.player.x += Math.cos(this.player.angle) * 90 * dt;
+    this.player.y += Math.sin(this.player.angle) * 90 * dt;
+    this.updateCheat(dt);
+
+    const step = (this.input.wasPressed('right') ? 1 : 0) - (this.input.wasPressed('left') ? 1 : 0);
+    if (step !== 0) {
+      this.craftIndex = (this.craftIndex + step + CRAFT.length) % CRAFT.length;
+      this.player.setCraft(this.craft.id);
+      this.sfx.hit();
+    }
+
+    const touch = this.input.touch;
+    // Computed once here and reused by the renderer, so the screen and the
+    // hit testing are literally the same boxes.
+    const layout = selectLayout(this.cam.width, this.cam.height);
+    this.selectBoxes = layout;
+    let tappedStart = false;
+    if (touch && touch.tapPoint) {
+      const card = cardAt(touch.tapPoint, layout);
+      if (card !== -1 && card !== this.craftIndex) {
+        this.craftIndex = card;
+        this.player.setCraft(this.craft.id);
+        this.sfx.hit();
+      } else if (card === this.craftIndex || inStart(touch.tapPoint, layout)) {
+        tappedStart = true;
+      }
+    }
+
+    // Press and hold the locked slot to open it, for players with no keyboard.
+    const holdingCard = touch && touch.holdPoint
+      ? cardAt(touch.holdPoint, layout) === this.craftIndex
+      : this.input.isHeld('fire');
+    this.holdTimer = !this.isSelectable(this.craft) && holdingCard ? this.holdTimer + dt : 0;
+    if (this.holdTimer >= CHEAT_HOLD_SECONDS) {
+      this.holdTimer = 0;
+      this.unlockHidden('THE LONG PRESS');
+    }
+
+    if (this.unlockFlash > 0) this.unlockFlash -= dt;
+
+    const launch = this.input.wasPressed('start')
+      || tappedStart
+      || (this.input.wasPressed('fire') && this.isSelectable(this.craft));
+    if (launch && this.isSelectable(this.craft)) {
+      writeStored(CRAFT_KEY, this.craft.id);
+      this.startNewGame();
+    }
+    if (this.input.wasPressed('pause')) this.state = 'title';
+  }
+
+  /** The old arcade sequence, still good for opening the locked slot. */
+  updateCheat() {
+    const codes = this.input.recentCodes;
+    if (!codes.length) return;
+    for (const code of codes) {
+      this.cheatProgress = code === CHEAT[this.cheatProgress]
+        ? this.cheatProgress + 1
+        : (code === CHEAT[0] ? 1 : 0);
+      if (this.cheatProgress === CHEAT.length) {
+        this.cheatProgress = 0;
+        this.unlockHidden('THE OLD CODE');
+      }
+    }
   }
 
   updatePaused() {
@@ -248,8 +414,7 @@ export class Game {
     this.effects.update(dt);
     this.stateTimer -= dt;
     if (this.stateTimer <= 0 && this.input.wantsStart()) {
-      this.resetRun();
-      this.state = 'title';
+      this.state = 'select';
     }
   }
 
@@ -332,7 +497,7 @@ export class Game {
     if (this.kills >= this.quota) this.spawnBoss();
   }
 
-  killEnemy(enemy) {
+  killEnemy(enemy, chained = false) {
     enemy.dead = true;
     this.kills += 1;
     this.addScore(enemy.score);
@@ -344,6 +509,20 @@ export class Game {
 
     if (!enemy.isEscort && Math.random() < 0.22 && this.parachutists.length < 3) {
       this.parachutists.push(new Parachutist(enemy.x, enemy.y));
+    }
+
+    // A blast from a kill takes anything alongside it, but the chain stops
+    // there: secondary kills do not set off blasts of their own.
+    const blast = this.craft.killBlast;
+    if (blast > 0 && !chained) {
+      this.effects.ring(enemy.x, enemy.y, { radius: blast * 2, color: '#ffb066', width: 4 });
+      for (const other of this.enemies) {
+        if (other.dead || distance(other.x, other.y, enemy.x, enemy.y) > blast) continue;
+        this.killEnemy(other, true);
+      }
+      if (this.boss && distance(this.boss.x, this.boss.y, enemy.x, enemy.y) < blast + this.boss.radius) {
+        if (this.boss.hit(1)) this.killBoss(this.boss);
+      }
     }
   }
 
@@ -364,6 +543,18 @@ export class Game {
     this.enemies.length = 0;
     this.state = 'eraclear';
     this.stateTimer = 3.2;
+
+    // Completing a full lap of history earns the hidden craft.
+    if ((this.eraIndex + 1) % ERAS.length === 0) this.unlockHidden('A LAP OF HISTORY');
+  }
+
+  unlockHidden(reason) {
+    if (this.unlocked) return;
+    this.unlocked = true;
+    writeStored(UNLOCK_KEY, '1');
+    this.unlockFlash = 4;
+    this.showBanner(`S.WIND UNLOCKED — ${reason}`, 4);
+    this.sfx.extraLife();
   }
 
   killPlayer() {
@@ -386,7 +577,8 @@ export class Game {
       if (bullet.team === 'player') {
         for (const enemy of this.enemies) {
           if (enemy.dead || !circlesOverlap(bullet, enemy)) continue;
-          bullet.dead = true;
+          if (bullet.pierce > 0) bullet.pierce -= 1;
+          else bullet.dead = true;
           this.killEnemy(enemy);
           break;
         }
@@ -394,7 +586,7 @@ export class Game {
           bullet.dead = true;
           this.effects.burst(bullet.x, bullet.y, { count: 5, speed: 90, life: 0.3, size: 2 });
           this.sfx.hit();
-          if (this.boss.hit()) this.killBoss(this.boss);
+          if (this.boss.hit(bullet.damage)) this.killBoss(this.boss);
         }
       } else if (this.player.alive && this.player.invulnerable <= 0 && circlesOverlap(bullet, this.player)) {
         bullet.dead = true;
@@ -449,6 +641,7 @@ export class Game {
     }
     for (const enemy of this.enemies) enemy.draw(ctx, this.cam, this.time);
     if (this.boss) this.boss.draw(ctx, this.cam, this.time);
+    this.player.drawLock(ctx, this.cam, this, this.time);
     this.player.draw(ctx, this.cam, this.time);
     for (const bullet of this.bullets) {
       if (bullet.team === 'player') bullet.draw(ctx, this.cam);

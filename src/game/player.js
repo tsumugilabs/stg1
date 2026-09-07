@@ -1,21 +1,25 @@
 import { turnToward, wrapAngle } from '../core/math.js';
-import { drawPlayer } from '../render/sprites.js';
-
-export const PLAYER_SPEED = 178;
-export const PLAYER_TURN_RATE = 3.6;
-const FIRE_COOLDOWN = 0.18;
-const MAX_SHOTS = 8;
+import { drawPlayer, drawPod } from '../render/sprites.js';
+import { craftById, DEFAULT_CRAFT } from './craft.js';
 
 /**
  * The player's craft. It always sits at the centre of the screen — the world
  * scrolls around it, which is what gives the game its free-roaming feel.
+ *
+ * Every performance figure comes from the craft table, so switching airframes
+ * is the only thing that changes how this behaves.
  */
 export class Player {
-  constructor() {
-    // Deliberately much smaller than the sprite: near misses should read as
-    // near misses, not deaths.
-    this.radius = 8;
+  constructor(craftId = DEFAULT_CRAFT) {
+    this.setCraft(craftId);
     this.reset(0, 0);
+  }
+
+  setCraft(craftId) {
+    this.craft = craftById(craftId);
+    // The hitbox is deliberately well inside the sprite: a near miss should
+    // read as a near miss, not a death.
+    this.radius = this.craft.radius;
   }
 
   reset(x, y) {
@@ -23,31 +27,79 @@ export class Player {
     this.y = y;
     this.angle = 0;
     this.fireTimer = 0;
-    this.invulnerable = 2.4;
+    this.sinceFired = 99;
+    this.trailTimer = 0;
+    this.invulnerable = this.craft.respawnShield;
     this.alive = true;
+    this.pod = this.craft.pod
+      ? { x, y, angle: 0, fireTimer: 0.6 }
+      : null;
+  }
+
+  /** Craft with a glide bonus turn tighter while they hold their fire. */
+  get turnRate() {
+    const glide = this.craft.glideTurn;
+    if (glide && this.sinceFired >= glide.after) return glide.turnRate;
+    return this.craft.turnRate;
   }
 
   update(dt, input, game) {
     if (!this.alive) return;
+    const craft = this.craft;
 
     const dir = input.direction();
     if (dir) {
-      this.angle = turnToward(this.angle, Math.atan2(dir.y, dir.x), PLAYER_TURN_RATE * dt);
+      this.angle = turnToward(this.angle, Math.atan2(dir.y, dir.x), this.turnRate * dt);
     }
-    this.x += Math.cos(this.angle) * PLAYER_SPEED * dt;
-    this.y += Math.sin(this.angle) * PLAYER_SPEED * dt;
+    this.x += Math.cos(this.angle) * craft.speed * dt;
+    this.y += Math.sin(this.angle) * craft.speed * dt;
 
     this.fireTimer -= dt;
+    this.sinceFired += dt;
     if (this.invulnerable > 0) this.invulnerable -= dt;
 
     const shotsAlive = game.bullets.reduce((n, b) => (b.team === 'player' ? n + 1 : n), 0);
-    if (input.isHeld('fire') && this.fireTimer <= 0 && shotsAlive < MAX_SHOTS) {
-      this.fireTimer = FIRE_COOLDOWN;
-      game.firePlayerBullet(
-        this.x + Math.cos(this.angle) * 18,
-        this.y + Math.sin(this.angle) * 18,
-        this.angle,
-      );
+    if (input.isHeld('fire') && this.fireTimer <= 0 && shotsAlive < craft.maxShots) {
+      this.fireTimer = craft.fireCooldown;
+      this.sinceFired = 0;
+      game.firePlayerVolley(this.x, this.y, this.angle);
+    }
+
+    if (craft.trail) {
+      this.trailTimer -= dt;
+      if (this.trailTimer <= 0) {
+        this.trailTimer = craft.trail.every;
+        game.effects.trail(
+          this.x - Math.cos(this.angle) * 16,
+          this.y - Math.sin(this.angle) * 16,
+          craft.trail.colors,
+        );
+      }
+    }
+
+    if (this.pod) this.updatePod(dt, game);
+  }
+
+  /**
+   * The maneuver pod trails the craft and shoots for itself, picking whatever
+   * is closest rather than following the player's aim.
+   */
+  updatePod(dt, game) {
+    const pod = this.pod;
+    const anchorX = this.x - Math.cos(this.angle) * 26 - Math.sin(this.angle) * 22;
+    const anchorY = this.y - Math.sin(this.angle) * 26 + Math.cos(this.angle) * 22;
+    pod.x += (anchorX - pod.x) * Math.min(1, dt * 7);
+    pod.y += (anchorY - pod.y) * Math.min(1, dt * 7);
+
+    const target = game.nearestTarget(pod.x, pod.y, 460);
+    pod.angle = target
+      ? Math.atan2(target.y - pod.y, target.x - pod.x)
+      : this.angle;
+
+    pod.fireTimer -= dt;
+    if (target && pod.fireTimer <= 0) {
+      pod.fireTimer = 0.42;
+      game.firePodShot(pod.x, pod.y, pod.angle);
     }
   }
 
@@ -57,14 +109,24 @@ export class Player {
   }
 
   draw(ctx, cam, time) {
-    if (!this.alive || !this.visible) return;
+    if (!this.alive) return;
     const sx = this.x - cam.x + cam.width / 2;
     const sy = this.y - cam.y + cam.height / 2;
+
+    if (this.pod) {
+      ctx.save();
+      ctx.translate(this.pod.x - cam.x + cam.width / 2, this.pod.y - cam.y + cam.height / 2);
+      ctx.rotate(this.pod.angle);
+      drawPod(ctx, this.craft.colors, time);
+      ctx.restore();
+    }
+
+    if (!this.visible) return;
     ctx.save();
     ctx.translate(sx, sy);
     ctx.rotate(wrapAngle(this.angle));
     ctx.scale(1.3, 1.3);
-    drawPlayer(ctx, { thrust: true, time });
+    drawPlayer(ctx, { id: this.craft.id, colors: this.craft.colors, thrust: true, time });
     ctx.restore();
 
     if (this.invulnerable > 0) {
@@ -77,5 +139,32 @@ export class Player {
       ctx.stroke();
       ctx.restore();
     }
+  }
+
+  /** Reticle the S.Wind's fire control paints on whatever it has locked. */
+  drawLock(ctx, cam, game, time) {
+    if (!this.craft.lockOn || !this.alive) return;
+    const target = game.nearestTarget(this.x, this.y, 520);
+    if (!target) return;
+    const sx = target.x - cam.x + cam.width / 2;
+    const sy = target.y - cam.y + cam.height / 2;
+    const size = target.radius + 14 + Math.sin(time * 6) * 2;
+    ctx.save();
+    ctx.strokeStyle = this.craft.colors.accent;
+    ctx.lineWidth = 1.6;
+    ctx.globalAlpha = 0.85;
+    for (const [cx, cy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+      ctx.beginPath();
+      ctx.moveTo(sx + cx * size, sy + cy * size - cy * size * 0.55);
+      ctx.lineTo(sx + cx * size, sy + cy * size);
+      ctx.lineTo(sx + cx * size - cx * size * 0.55, sy + cy * size);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 0.35;
+    ctx.beginPath();
+    ctx.moveTo(this.x - cam.x + cam.width / 2, this.y - cam.y + cam.height / 2);
+    ctx.lineTo(sx, sy);
+    ctx.stroke();
+    ctx.restore();
   }
 }

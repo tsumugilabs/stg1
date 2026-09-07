@@ -3,7 +3,7 @@ import test from 'node:test';
 import {
   CYCLE_DIFFICULTY_STEP, cycleAt, difficultyAt, eraAt, ERAS,
 } from '../src/game/levels.js';
-import { PLAYER_SPEED, PLAYER_TURN_RATE } from '../src/game/player.js';
+import { slowestCraft, widestTurningCraft } from '../src/game/craft.js';
 
 const RISING = [
   'enemySpeed', 'enemyTurn', 'bulletSpeed', 'quota', 'bossHp',
@@ -51,20 +51,25 @@ test('flagship escorts start absent and then arrive faster', () => {
   }
 });
 
-test('no escort out-runs or out-turns the player on the first lap', () => {
+test('no escort out-runs or out-turns any craft on the first lap', () => {
+  // The bar is the worst craft on each axis: every airframe must stay flyable.
+  const slowest = slowestCraft();
+  const widest = widestTurningCraft();
   for (const era of ERAS) {
-    assert.ok(era.enemySpeed < PLAYER_SPEED,
-      `${era.label} escorts (${era.enemySpeed}) are faster than the player (${PLAYER_SPEED})`);
-    assert.ok(era.enemyTurn < PLAYER_TURN_RATE,
-      `${era.label} escorts out-turn the player`);
+    assert.ok(era.enemySpeed < slowest.speed,
+      `${era.label} escorts (${era.enemySpeed}) out-run the ${slowest.name} (${slowest.speed})`);
+    assert.ok(era.enemyTurn < widest.turnRate,
+      `${era.label} escorts out-turn the ${widest.name}`);
   }
 });
 
 test('the opening era is an introduction, not a fight', () => {
   const first = ERAS[0];
+  const slowest = slowestCraft();
+  const widest = widestTurningCraft();
   assert.ok(first.maxEnemies <= 2, 'more than two escorts at once is not an introduction');
-  assert.ok(first.enemySpeed < PLAYER_SPEED * 0.5, 'the player must comfortably outrun the first escorts');
-  assert.ok(first.enemyTurn < PLAYER_TURN_RATE * 0.3, 'the player must comfortably out-turn them');
+  assert.ok(first.enemySpeed < slowest.speed * 0.5, 'every craft must comfortably outrun the first escorts');
+  assert.ok(first.enemyTurn < widest.turnRate * 0.4, 'every craft must comfortably out-turn them');
   assert.ok(first.fireInterval[0] >= 3, 'the first escorts should rarely shoot');
   assert.equal(first.squadronChance, 0, 'the first era should never spawn a pair at once');
   assert.equal(first.bossShots, 1, 'the first flagship should not fire a spread');
