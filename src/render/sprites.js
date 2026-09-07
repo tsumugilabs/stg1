@@ -468,6 +468,55 @@ export function drawBossCraft(ctx, kind, colors, time = 0) {
 }
 
 /** Parachutist is drawn upright in world space, not rotated with a heading. */
+/**
+ * A downed squadron pilot. Deliberately not the same picture as the bonus
+ * parachutist: the silk carries the craft's own colour and a rescue ring
+ * closes around them as their time runs out, so at a glance you can tell
+ * "points" from "one of ours, hurry".
+ */
+export function drawDownedPilot(ctx, time, colors, left = 1) {
+  const sway = Math.sin(time * 2.2) * 0.14;
+  const urgent = left < 0.34;
+  const pulse = 0.55 + Math.sin(time * (urgent ? 12 : 5)) * 0.35;
+
+  ctx.save();
+  ctx.globalAlpha = pulse * 0.7;
+  ctx.strokeStyle = urgent ? '#ff5a5a' : '#7cf5ff';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(0, 0, 30, 0, Math.PI * 2);
+  ctx.stroke();
+  // The arc that empties: how long this pilot has left, drawn around them.
+  ctx.globalAlpha = 0.9;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(0, 0, 30, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * left);
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.save();
+  ctx.rotate(sway);
+  ctx.beginPath();
+  ctx.arc(0, -10, 13, Math.PI, 0);
+  ctx.closePath();
+  ctx.fillStyle = colors.accent;
+  ctx.fill();
+  ctx.strokeStyle = colors.body;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(-13, -10); ctx.lineTo(-3, 4);
+  ctx.moveTo(13, -10); ctx.lineTo(3, 4);
+  ctx.strokeStyle = colors.body;
+  ctx.stroke();
+  ctx.fillStyle = '#f4f7fb';
+  ctx.fillRect(-3.5, 3, 7, 9);
+  ctx.beginPath();
+  ctx.arc(0, 2, 3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 export function drawParachutist(ctx, time = 0) {
   const sway = Math.sin(time * 2.2) * 0.12;
   ctx.save();

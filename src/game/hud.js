@@ -55,6 +55,40 @@ function isOffScreen(cam, x, y, margin) {
 function offScreenMarkers(ctx, game, cam) {
   const margin = 34;
 
+  // A parachute off the edge of the screen is the most urgent thing there is,
+  // so it gets the loudest marker on the rim: a filled amber wedge that goes
+  // white and fast as the pilot's time runs out.
+  for (const mate of game.players) {
+    if (mate.local || !mate.downed) continue;
+    if (!isOffScreen(cam, mate.x, mate.y, margin + 18)) continue;
+    const left = Math.max(0, mate.chute.timer) / mate.chute.window;
+    const urgent = left < 0.34;
+    const beat = 0.55 + Math.sin(game.time * (urgent ? 14 : 6)) * 0.4;
+    const at = edgePoint(cam, mate.x, mate.y, margin + 10);
+    ctx.save();
+    ctx.translate(at.x, at.y);
+    ctx.globalAlpha = beat;
+    ctx.fillStyle = urgent ? '#ffffff' : '#ffd166';
+    ctx.beginPath();
+    ctx.arc(0, 0, 11, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = urgent ? '#ff5a5a' : '#ffd166';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, 15, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * left);
+    ctx.stroke();
+    ctx.rotate(at.angle);
+    ctx.fillStyle = urgent ? '#ff5a5a' : '#ffd166';
+    ctx.beginPath();
+    ctx.moveTo(22, 0);
+    ctx.lineTo(13, 6);
+    ctx.lineTo(13, -6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
   for (const mate of game.players) {
     if (mate.local || !mate.flying) continue;
     if (!isOffScreen(cam, mate.x, mate.y, margin + 18)) continue;
@@ -174,7 +208,12 @@ function squadPanel(ctx, game, right, top) {
       ctx.fillRect(left, barY, width * clamp(mate.hp / Math.max(mate.maxHp, 1), 0, 1), 4);
     }
     if (mate.out) label(ctx, 'OUT', right - 22, y, { size: 10, color: '#ff8f8f' });
-    else if (down) label(ctx, `${Math.max(0, mate.downTimer).toFixed(1)}s`, right - 24, y, { size: 10, color: '#ff8f8f' });
+    else if (mate.downed) {
+      const left = Math.max(0, mate.chute.timer);
+      const blink = left < 4 && Math.floor(left * 4) % 2 === 0;
+      label(ctx, `SOS ${left.toFixed(1)}`, right - 40, y,
+        { size: 10, color: blink ? '#ffffff' : '#ffd166' });
+    } else if (down) label(ctx, `${Math.max(0, mate.downTimer).toFixed(1)}s`, right - 24, y, { size: 10, color: '#ff8f8f' });
     else label(ctx, `x${mate.lives}`, right - 16, y, { size: 10, color: DIM });
     y += rowH;
   }
@@ -292,6 +331,20 @@ export function drawHud(ctx, game, cam) {
 
   if (game.rescueChain > 0) {
     label(ctx, `RESCUE x${game.rescueChain}`, w - 16, h - 22, { size: 14, color: '#ffd166', align: 'right' });
+  }
+
+  // Hanging under your own silk. The stick still nudges the chute, so this
+  // says so — a downed player with nothing to do is a player watching.
+  if (game.player.downed) {
+    const left = Math.max(0, game.player.chute.timer);
+    const urgent = left < 4;
+    label(ctx, `BAIL OUT  ${left.toFixed(1)}`, w / 2, h / 2 - 74, {
+      size: Math.max(20, Math.min(34, w / 26)),
+      color: urgent && Math.floor(left * 4) % 2 === 0 ? '#ffffff' : '#ff8f8f',
+      align: 'center',
+    });
+    label(ctx, game.squadOut ? '' : '僚機の救助を待て ・ スティックで流される向きを変えられる',
+      w / 2, h / 2 - 48, { size: Math.max(11, Math.min(15, w / 56)), color: DIM, align: 'center' });
   }
 
   if (game.state === 'playing' || game.state === 'paused') {

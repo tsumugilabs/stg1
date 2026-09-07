@@ -16,6 +16,12 @@ const LEASH = 330;
 const AREA = 560;
 /** Break off rather than trade a collision at this range. */
 const STANDOFF = 110;
+/**
+ * A wingman will cross most of the map for a parachute. Rescue outranks the
+ * leash and outranks the fight: an escort left alive costs nothing, and a
+ * pilot left hanging costs a craft.
+ */
+const RESCUE_RANGE = 1400;
 
 export class Wingman {
   constructor(player) {
@@ -49,6 +55,30 @@ export class Wingman {
     return ranked[Math.min(this.slot, ranked.length - 1)].e;
   }
 
+  /**
+   * The parachute this wingman is going for, if any. Only the nearest flier
+   * to a given pilot goes: three craft converging on one parachute leaves the
+   * sky to the enemy and gets nobody home faster.
+   */
+  pickRescue(game) {
+    const me = this.player;
+    let best = null;
+    let bestGap = RESCUE_RANGE;
+    for (const mate of game.players) {
+      if (!mate.downed) continue;
+      const gap = distance(me.x, me.y, mate.x, mate.y);
+      if (gap >= bestGap) continue;
+      const closer = game.players.some(
+        (other) => other !== me && other.flying
+          && distance(other.x, other.y, mate.x, mate.y) < gap,
+      );
+      if (closer) continue;
+      best = mate;
+      bestGap = gap;
+    }
+    return best;
+  }
+
   /** Where this wingman sits when there is nothing to chase. */
   station(lead) {
     const side = this.slot % 2 === 0 ? 1 : -1;
@@ -63,12 +93,19 @@ export class Wingman {
   control(dt, game) {
     const me = this.player;
     const lead = game.players[game.localIndex];
-    const target = this.pickTarget(game, lead);
+    const rescue = this.pickRescue(game);
+    const target = rescue ? null : this.pickTarget(game, lead);
 
     // Regroup first: a wingman that wanders off is no use to anyone.
-    const strayed = lead && lead !== me && distance(me.x, me.y, lead.x, lead.y) > LEASH;
+    const strayed = !rescue && lead && lead !== me
+      && distance(me.x, me.y, lead.x, lead.y) > LEASH;
     let aim;
-    if (strayed) {
+    if (rescue) {
+      // Straight at the silk. A parachute drifts slowly enough that there is
+      // no point leading it, and every second of hesitation is a second off
+      // somebody's clock.
+      aim = Math.atan2(rescue.y - me.y, rescue.x - me.x);
+    } else if (strayed) {
       // Cut the corner rather than tailing: a slower craft can never catch a
       // faster one by flying at where it currently is.
       const gap = distance(me.x, me.y, lead.x, lead.y);
