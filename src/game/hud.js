@@ -1,8 +1,10 @@
 import { clamp } from '../core/math.js';
 import { drawPlayer } from '../render/sprites.js';
+import { UI_DIM, UI_INK, UI_PANEL } from '../render/ui.js';
+import { drawSelect } from './selectscreen.js';
 
-const INK = '#eaf3ff';
-const DIM = '#9fb6d1';
+const INK = UI_INK;
+const DIM = UI_DIM;
 
 function label(ctx, text, x, y, { size = 16, color = INK, align = 'left', weight = 'bold' } = {}) {
   ctx.font = `${weight} ${size}px "Courier New", monospace`;
@@ -14,7 +16,7 @@ function label(ctx, text, x, y, { size = 16, color = INK, align = 'left', weight
 
 function panel(ctx, x, y, w, h, alpha = 0.35) {
   ctx.globalAlpha = alpha;
-  ctx.fillStyle = '#04101d';
+  ctx.fillStyle = UI_PANEL;
   ctx.fillRect(x, y, w, h);
   ctx.globalAlpha = 1;
 }
@@ -69,6 +71,11 @@ export function drawHud(ctx, game, cam) {
   const h = cam.height;
   const era = game.era;
 
+  if (game.state === 'select') {
+    drawSelect(ctx, game, cam);
+    return;
+  }
+
   panel(ctx, 0, 0, w, 42, 0.4);
   label(ctx, `SCORE ${String(game.score).padStart(7, '0')}`, 16, 27, { size: 18 });
   label(ctx, `HI ${String(game.highScore).padStart(7, '0')}`, w / 2, 27, { size: 18, color: DIM, align: 'center' });
@@ -82,7 +89,7 @@ export function drawHud(ctx, game, cam) {
     ctx.translate(26 + i * 30, h - 26);
     ctx.scale(0.62, 0.62);
     ctx.rotate(-Math.PI / 2);
-    drawPlayer(ctx, { thrust: false });
+    drawPlayer(ctx, { id: game.craft.id, colors: game.craft.colors, thrust: false });
     ctx.restore();
   }
   if (game.lives > 6) label(ctx, `x${game.lives}`, 26 + 6 * 30, h - 20, { size: 15, color: DIM });
@@ -115,9 +122,10 @@ export function drawHud(ctx, game, cam) {
   switch (game.state) {
     case 'title':
       centeredMessage(ctx, cam, [
-        { text: 'CHRONO PILOT', size: 44, color: '#ffd166' },
-        { text: 'FLY THROUGH TIME. SHOOT DOWN THE FLAGSHIP.', size: 15, color: DIM },
-        { text: game.touchMode ? 'TAP TO START' : 'PRESS ENTER OR SPACE TO START', size: 18, color: INK },
+        { text: 'CHRONO PILOT', size: Math.min(44, w / 17), color: '#ffd166' },
+        { text: 'FLY THROUGH TIME. SHOOT DOWN THE FLAGSHIP.', size: Math.min(15, w / 46), color: DIM },
+        { text: game.touchMode ? 'TAP TO START' : 'PRESS ENTER OR SPACE TO START',
+          size: Math.min(18, w / 40), color: INK },
       ]);
       break;
     case 'paused':

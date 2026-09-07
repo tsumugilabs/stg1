@@ -30,6 +30,19 @@ export class Effects {
     }
   }
 
+  /** A short-lived mote dropped behind a craft to draw an exhaust ribbon. */
+  trail(x, y, colors) {
+    this.particles.push({
+      x, y,
+      vx: randRange(-14, 14),
+      vy: randRange(-14, 14),
+      life: 0.42,
+      maxLife: 0.42,
+      size: randRange(1.8, 3.4),
+      color: colors[Math.floor(Math.random() * colors.length)],
+    });
+  }
+
   ring(x, y, { radius = 70, life = 0.45, color = '#ffe9b0', width = 3 } = {}) {
     this.rings.push({ x, y, radius, life, maxLife: life, color, width });
   }

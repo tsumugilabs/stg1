@@ -19,6 +19,9 @@ export class Input {
     this.touch = null;
     this.held = new Set();
     this.pressed = new Set();
+    // Raw codes pressed this frame, regardless of any action binding: the
+    // cheat sequence needs keys (B, A) that are not bound to anything.
+    this.recentCodes = [];
     this.anyKeyPressed = false;
     this._onKeyDown = (event) => this._handleDown(event);
     this._onKeyUp = (event) => this._handleUp(event);
@@ -39,6 +42,7 @@ export class Input {
 
   _handleDown(event) {
     if (SWALLOWED.has(event.code)) event.preventDefault();
+    if (!event.repeat) this.recentCodes.push(event.code);
     const action = BINDINGS[event.code];
     if (!action) return;
     if (!event.repeat) {
@@ -90,6 +94,7 @@ export class Input {
   /** Call once at the end of every frame to expire edge-triggered presses. */
   endFrame() {
     this.pressed.clear();
+    this.recentCodes.length = 0;
     this.anyKeyPressed = false;
     if (this.touch) this.touch.endFrame();
   }

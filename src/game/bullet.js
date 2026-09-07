@@ -1,5 +1,5 @@
 export class Bullet {
-  constructor({ x, y, angle, speed, life, team, color, radius = 3 }) {
+  constructor({ x, y, angle, speed, life, team, color, radius = 3, damage = 1, pierce = 0 }) {
     this.x = x;
     this.y = y;
     this.vx = Math.cos(angle) * speed;
@@ -9,6 +9,8 @@ export class Bullet {
     this.team = team;
     this.color = color;
     this.radius = radius;
+    this.damage = damage;
+    this.pierce = pierce;
     this.dead = false;
   }
 
