@@ -46,7 +46,7 @@ export class Game {
     this.boss = null;
 
     this.cam = { x: 0, y: 0, width: canvas.width, height: canvas.height, era: eraAt(0) };
-    this.spawnRadius = Math.hypot(canvas.width, canvas.height) / 2 + 70;
+    this.resize();
 
     this.highScore = readHighScore();
     this.state = 'title';
@@ -60,12 +60,25 @@ export class Game {
     this.state = 'title';
   }
 
+  /** Picks up a new canvas size; the view can change shape on rotation. */
+  resize() {
+    this.cam.width = this.canvas.width;
+    this.cam.height = this.canvas.height;
+    // Enemies must arrive from just beyond whatever the player can actually see.
+    this.spawnRadius = Math.hypot(this.canvas.width, this.canvas.height) / 2 + 70;
+  }
+
   get era() {
     return eraAt(this.eraIndex);
   }
 
   get nextEraLabel() {
     return eraAt(this.eraIndex + 1).label;
+  }
+
+  /** True once the player has touched the screen (or is on a touch device). */
+  get touchMode() {
+    return Boolean(this.input.touch && this.input.touch.enabled);
   }
 
   get difficulty() {
@@ -440,6 +453,11 @@ export class Game {
     this.effects.draw(ctx, this.cam);
 
     drawHud(ctx, this, this.cam);
+
+    if (this.input.touch) {
+      const playing = this.state === 'playing' || this.state === 'paused' || this.state === 'respawn';
+      this.input.touch.draw(ctx, { showSticks: this.state !== 'paused' && playing });
+    }
   }
 }
 

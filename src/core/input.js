@@ -16,6 +16,7 @@ const SWALLOWED = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'S
 export class Input {
   constructor(target = window) {
     this.target = target;
+    this.touch = null;
     this.held = new Set();
     this.pressed = new Set();
     this.anyKeyPressed = false;
@@ -52,16 +53,24 @@ export class Input {
     if (action) this.held.delete(action);
   }
 
+  /** Touch controls stand in for the keyboard when one is attached. */
+  useTouch(touch) {
+    this.touch = touch;
+  }
+
   isHeld(action) {
+    if (action === 'fire' && this.touch && this.touch.firing) return true;
     return this.held.has(action);
   }
 
   wasPressed(action) {
+    if (action === 'pause' && this.touch && this.touch.pauseTapped) return true;
     return this.pressed.has(action);
   }
 
-  /** True for either dedicated start keys or the fire button. */
+  /** True for the dedicated start keys, the fire button, or a tap. */
   wantsStart() {
+    if (this.touch && this.touch.tapped) return true;
     return this.wasPressed('start') || this.wasPressed('fire');
   }
 
@@ -73,7 +82,7 @@ export class Input {
     if (this.isHeld('right')) x += 1;
     if (this.isHeld('up')) y -= 1;
     if (this.isHeld('down')) y += 1;
-    if (x === 0 && y === 0) return null;
+    if (x === 0 && y === 0) return this.touch ? this.touch.direction() : null;
     const length = Math.hypot(x, y);
     return { x: x / length, y: y / length };
   }
@@ -82,5 +91,6 @@ export class Input {
   endFrame() {
     this.pressed.clear();
     this.anyKeyPressed = false;
+    if (this.touch) this.touch.endFrame();
   }
 }

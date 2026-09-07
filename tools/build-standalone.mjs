@@ -21,6 +21,7 @@ const MODULES = [
   'src/core/math.js',
   'src/core/loop.js',
   'src/core/input.js',
+  'src/core/touch.js',
   'src/core/audio.js',
   'src/render/sprites.js',
   'src/game/levels.js',

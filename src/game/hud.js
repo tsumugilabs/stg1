@@ -72,7 +72,9 @@ export function drawHud(ctx, game, cam) {
   panel(ctx, 0, 0, w, 42, 0.4);
   label(ctx, `SCORE ${String(game.score).padStart(7, '0')}`, 16, 27, { size: 18 });
   label(ctx, `HI ${String(game.highScore).padStart(7, '0')}`, w / 2, 27, { size: 18, color: DIM, align: 'center' });
-  label(ctx, `${era.label}  ${era.subtitle}`, w - 16, 27, { size: 15, color: DIM, align: 'right' });
+  // On a narrow view (a phone held upright) the subtitle would run into the hi-score.
+  label(ctx, w < 760 ? era.label : `${era.label}  ${era.subtitle}`, w - 16, 27,
+    { size: 15, color: DIM, align: 'right' });
 
   // Remaining lives, drawn with the actual player sprite.
   for (let i = 0; i < Math.min(game.lives, 6); i += 1) {
@@ -115,13 +117,13 @@ export function drawHud(ctx, game, cam) {
       centeredMessage(ctx, cam, [
         { text: 'CHRONO PILOT', size: 44, color: '#ffd166' },
         { text: 'FLY THROUGH TIME. SHOOT DOWN THE FLAGSHIP.', size: 15, color: DIM },
-        { text: 'PRESS ENTER OR SPACE TO START', size: 18, color: INK },
+        { text: game.touchMode ? 'TAP TO START' : 'PRESS ENTER OR SPACE TO START', size: 18, color: INK },
       ]);
       break;
     case 'paused':
       centeredMessage(ctx, cam, [
         { text: 'PAUSED', size: 40, color: INK },
-        { text: 'PRESS P TO RESUME', size: 16, color: DIM },
+        { text: game.touchMode ? 'TAP THE PLAY BUTTON TO RESUME' : 'PRESS P TO RESUME', size: 16, color: DIM },
       ]);
       break;
     case 'eraclear':
@@ -135,7 +137,7 @@ export function drawHud(ctx, game, cam) {
       centeredMessage(ctx, cam, [
         { text: 'GAME OVER', size: 42, color: '#ff8f8f' },
         { text: `SCORE ${String(game.score).padStart(7, '0')}`, size: 20, color: INK },
-        { text: 'PRESS ENTER TO CONTINUE', size: 16, color: DIM },
+        { text: game.touchMode ? 'TAP TO CONTINUE' : 'PRESS ENTER TO CONTINUE', size: 16, color: DIM },
       ]);
       break;
     default:
@@ -144,7 +146,10 @@ export function drawHud(ctx, game, cam) {
 
   if (game.banner && game.bannerTimer > 0) {
     ctx.globalAlpha = Math.min(1, game.bannerTimer * 2);
-    label(ctx, game.banner, w / 2, 92, { size: 30, color: '#ffd166', align: 'center' });
+    // Shrink with the view so the banner never runs under the pause button.
+    label(ctx, game.banner, w / 2, 96, {
+      size: Math.max(17, Math.min(30, w / 22)), color: '#ffd166', align: 'center',
+    });
     ctx.globalAlpha = 1;
   }
 
