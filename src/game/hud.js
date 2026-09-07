@@ -47,12 +47,37 @@ function isOffScreen(cam, x, y, margin) {
 }
 
 /**
- * Off-screen markers. Escorts get a small, quiet chevron in the era's own
- * colour; the flagship gets a large red arrowhead with a pulsing ring behind
- * it, so at a glance you can tell what is closing on you and from where.
+ * Off-screen markers. Three kinds, deliberately unalike: escorts get a small
+ * quiet chevron in the era's colour, a wingman gets a hollow ring in its own
+ * craft colour, and the flagship gets a large red arrowhead inside a pulsing
+ * ring. At a glance you can tell what is out there and whose side it is on.
  */
 function offScreenMarkers(ctx, game, cam) {
   const margin = 34;
+
+  for (const mate of game.players) {
+    if (mate.local || !mate.flying) continue;
+    if (!isOffScreen(cam, mate.x, mate.y, margin + 18)) continue;
+    const at = edgePoint(cam, mate.x, mate.y, margin + 10);
+    ctx.save();
+    ctx.translate(at.x, at.y);
+    ctx.globalAlpha = 0.75;
+    ctx.strokeStyle = mate.craft.colors.accent;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, 9, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.rotate(at.angle);
+    ctx.fillStyle = mate.craft.colors.accent;
+    ctx.beginPath();
+    ctx.moveTo(13, 0);
+    ctx.lineTo(5, 5);
+    ctx.lineTo(5, -5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
 
   let shown = 0;
   for (const enemy of game.enemies) {
@@ -118,6 +143,40 @@ function moduleChips(ctx, game, x, y) {
     ctx.globalAlpha = 1;
     label(ctx, text, left + 6, y, { size: 11, color: module.color });
     left += width + 5;
+  }
+}
+
+/**
+ * The rest of the flight: one row each, armour as a bar, greyed out while a
+ * craft is down and struck through once it is out for good.
+ */
+function squadPanel(ctx, game, right, top) {
+  if (game.players.length < 2) return;
+  const width = 116;
+  const rowH = 20;
+  const left = right - width;
+  ctx.globalAlpha = 0.35;
+  ctx.fillStyle = UI_PANEL;
+  ctx.fillRect(left - 6, top - 14, width + 12, (game.players.length - 1) * rowH + 10);
+  ctx.globalAlpha = 1;
+
+  let y = top;
+  for (const mate of game.players) {
+    if (mate.local) continue;
+    const down = !mate.flying;
+    const colour = mate.out ? '#5d7085' : (down ? '#ff8f8f' : mate.craft.colors.accent);
+    label(ctx, `${mate.name} ${mate.craft.name}`, left, y, { size: 10, color: colour });
+    const barY = y + 4;
+    ctx.fillStyle = '#22344a';
+    ctx.fillRect(left, barY, width, 4);
+    if (!mate.out) {
+      ctx.fillStyle = down ? '#5d7085' : '#7cf5ff';
+      ctx.fillRect(left, barY, width * clamp(mate.hp / Math.max(mate.maxHp, 1), 0, 1), 4);
+    }
+    if (mate.out) label(ctx, 'OUT', right - 22, y, { size: 10, color: '#ff8f8f' });
+    else if (down) label(ctx, `${Math.max(0, mate.downTimer).toFixed(1)}s`, right - 24, y, { size: 10, color: '#ff8f8f' });
+    else label(ctx, `x${mate.lives}`, right - 16, y, { size: 10, color: DIM });
+    y += rowH;
   }
 }
 
@@ -191,6 +250,7 @@ export function drawHud(ctx, game, cam) {
 
   armourGauge(ctx, game, 18, h - 46);
   brakeGauge(ctx, game, 18, h - 18);
+  squadPanel(ctx, game, w - 16, 62);
   moduleChips(ctx, game, 16, 58);
 
   if (game.player.craft.stealth) {
@@ -234,7 +294,7 @@ export function drawHud(ctx, game, cam) {
     label(ctx, `RESCUE x${game.rescueChain}`, w - 16, h - 22, { size: 14, color: '#ffd166', align: 'right' });
   }
 
-  if (game.state === 'playing' || game.state === 'paused' || game.state === 'respawn') {
+  if (game.state === 'playing' || game.state === 'paused') {
     offScreenMarkers(ctx, game, cam);
     if (game.debugFlags.hitboxes) drawHitboxes(ctx, game, cam);
     if (game.debug) drawDebug(ctx, game, cam);

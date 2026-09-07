@@ -1,4 +1,4 @@
-import { circlesOverlap, distance, randRange, TAU } from '../core/math.js';
+import { circlesOverlap, clamp, distance, randInt, randRange, TAU } from '../core/math.js';
 import { Background } from './background.js';
 import { Boss } from './boss.js';
 import { Bullet } from './bullet.js';
@@ -17,6 +17,7 @@ import {
   MODULES, makePart, partScore, resolveCraft, rollModule, SLOTS, WEAPONS,
 } from './gear.js';
 import { ModulePickup } from './pickup.js';
+import { Wingman } from './wingman.js';
 import { beamEnd, distanceToSegment, drawBeam, Flare } from './weapons.js';
 import { cycleAt, difficultyAt, eraAt, ERAS } from './levels.js';
 
@@ -27,6 +28,8 @@ const LOCKER_KEY = 'chronopilot.locker';
 const LOADOUT_KEY = 'chronopilot.loadout';
 const LOCKER_LIMIT = 60;
 const DEBUG_KEY = 'chronopilot.debug';
+/** Craft in a squadron, counting the one the player is flying. */
+export const SQUAD_SIZE = 4;
 /** Chance an escort coughs up a module when it goes down, in SORTIE. */
 const MODULE_DROP_CHANCE = 0.07;
 const UNLOCK_KEY = 'chronopilot.unlocked';
@@ -97,7 +100,8 @@ export class Game {
 
     this.background = new Background();
     this.effects = new Effects();
-    this.player = new Player();
+    this.players = [new Player()];
+    this.localIndex = 0;
 
     this.enemies = [];
     this.bullets = [];
@@ -116,14 +120,15 @@ export class Game {
     this.cheatProgress = 0;
     this.holdTimer = 0;
     this.selectBoxes = null;
-    this.mode = readStored(MODE_KEY, 'arcade') === 'sortie' ? 'sortie' : 'arcade';
+    const storedMode = readStored(MODE_KEY, 'arcade');
+    this.mode = ['arcade', 'squadron', 'sortie'].includes(storedMode) ? storedMode : 'arcade';
     this.locker = readJson(LOCKER_KEY, []);
     this.loadout = readJson(LOADOUT_KEY, {});
     this.modules = [];
     this.resolvedCraft = null;
     this.lootBanner = '';
     this.lootTimer = 0;
-    this.modeIndex = this.mode === 'sortie' ? 1 : 0;
+    this.modeIndex = Math.max(0, MODES.findIndex((m) => m.id === this.mode));
     this.modeBoxes = null;
     this.loadoutBoxes = null;
     this.loadoutPane = 'slots';
@@ -158,6 +163,90 @@ export class Game {
   }
 
   /** Statistics actually flown: airframe, plus equipment, plus modules. */
+  get squadron() {
+    return this.mode === 'squadron';
+  }
+
+  /**
+   * How much to multiply a per-run quantity by for the size of the flight.
+   * `per` is the share each extra craft adds: 0.5 means four craft face two
+   * and a half times as much as one, not four times.
+   */
+  squadScale(per) {
+    return 1 + per * (this.players.length - 1);
+  }
+
+  /**
+   * Rebuilds the flight. Seat zero is always the local craft; the rest are
+   * wingmen for now, and are exactly the seats a peer will take later.
+   */
+  buildRoster() {
+    const wanted = this.squadron ? SQUAD_SIZE : 1;
+    const selectable = CRAFT.filter((craft) => !craft.hidden || this.unlocked);
+    this.players = [];
+    this.wingmen = [];
+    for (let i = 0; i < wanted; i += 1) {
+      const local = i === 0;
+      const craftId = local
+        ? this.baseCraft.id
+        : selectable[(this.craftIndex + i) % selectable.length].id;
+      const player = new Player(craftId, { local, index: i, name: `P${i + 1}` });
+      player.lives = player.craft.lives;
+      player.out = false;
+      this.players.push(player);
+      if (!local) this.wingmen.push(new Wingman(player));
+    }
+    this.localIndex = 0;
+    this.placeFormation();
+  }
+
+  /** Line the flight up abreast so nobody starts inside anybody else. */
+  placeFormation() {
+    this.players.forEach((player, i) => {
+      const side = i % 2 === 0 ? 1 : -1;
+      const rank = Math.ceil(i / 2);
+      player.reset(0, side * rank * 90);
+    });
+  }
+
+  /** Stock left on the craft the player is flying, for the HUD. */
+  get lives() {
+    return this.player.lives;
+  }
+
+  /** True once nobody in the squadron has anything left to fly. */
+  get squadOut() {
+    return this.players.every((p) => p.out);
+  }
+
+  /** The craft the camera follows and the controls drive. */
+  get player() {
+    return this.players[this.localIndex];
+  }
+
+  /** Everyone still able to fly, in seat order. */
+  livingPlayers() {
+    return this.players.filter((p) => p.flying);
+  }
+
+  /** Whoever is closest to a point, for enemies choosing a mark. */
+  nearestPlayer(x, y) {
+    let best = null;
+    let bestDistance = Infinity;
+    for (const player of this.players) {
+      if (!player.flying) continue;
+      const d = distance(x, y, player.x, player.y);
+      if (d < bestDistance) { bestDistance = d; best = player; }
+    }
+    return best ?? this.player;
+  }
+
+  /** Craft the roster spawns around: pressure spreads across the squadron. */
+  spawnAnchor() {
+    const living = this.livingPlayers();
+    return living.length ? living[randInt(0, living.length - 1)] : this.player;
+  }
+
   get craft() {
     return this.resolvedCraft ?? CRAFT[this.craftIndex];
   }
@@ -211,9 +300,9 @@ export class Game {
 
   resetRun() {
     this.modules = [];
+    this.buildRoster();
     this.rebuildCraft();
     this.score = 0;
-    this.lives = this.craft.lives;
     this.lootBanner = '';
     this.lootTimer = 0;
     this.eraIndex = 0;
@@ -225,7 +314,9 @@ export class Game {
   startEra() {
     const era = this.era;
     this.kills = 0;
-    this.quota = era.quota;
+    // A flight clears escorts several times faster than one craft, so the
+    // flagship has to be earned rather than arriving in half a minute.
+    this.quota = Math.round(era.quota * this.squadScale(0.5));
     this.enemies.length = 0;
     this.bullets.length = 0;
     this.parachutists.length = 0;
@@ -257,16 +348,18 @@ export class Game {
 
   spawnPoint() {
     const angle = randRange(0, TAU);
+    const anchor = this.spawnAnchor();
     return {
-      x: this.player.x + Math.cos(angle) * this.spawnRadius,
-      y: this.player.y + Math.sin(angle) * this.spawnRadius,
+      x: anchor.x + Math.cos(angle) * this.spawnRadius,
+      y: anchor.y + Math.sin(angle) * this.spawnRadius,
       angle,
     };
   }
 
   spawnSquadron(count) {
     const spot = this.spawnPoint();
-    const heading = Math.atan2(this.player.y - spot.y, this.player.x - spot.x);
+    const anchor = this.nearestPlayer(spot.x, spot.y);
+    const heading = Math.atan2(anchor.y - spot.y, anchor.x - spot.x);
     for (let i = 0; i < count; i += 1) {
       const offset = (i - (count - 1) / 2) * 46;
       this.enemies.push(new Enemy({
@@ -285,7 +378,8 @@ export class Game {
       const enemy = new Enemy({
         x: spot.x,
         y: spot.y,
-        angle: Math.atan2(this.player.y - spot.y, this.player.x - spot.x),
+        angle: Math.atan2(this.nearestPlayer(spot.x, spot.y).y - spot.y,
+          this.nearestPlayer(spot.x, spot.y).x - spot.x),
         era: this.era,
         difficulty: this.difficulty,
       });
@@ -299,7 +393,8 @@ export class Game {
     this.boss = new Boss({
       x: spot.x,
       y: spot.y,
-      angle: Math.atan2(this.player.y - spot.y, this.player.x - spot.x),
+      angle: Math.atan2(this.nearestPlayer(spot.x, spot.y).y - spot.y,
+        this.nearestPlayer(spot.x, spot.y).x - spot.x),
       era: this.era,
       difficulty: this.difficulty,
     });
@@ -452,7 +547,9 @@ export class Game {
     this.score += points;
     if (this.score >= this.nextExtraLife) {
       this.nextExtraLife += EXTRA_LIFE_EVERY;
-      this.lives += 1;
+      // In a squadron the whole flight gets the spare, not just whoever
+      // happened to score the points.
+      for (const player of this.players) if (!player.out) player.lives += 1;
       this.showBanner('EXTRA PILOT', 2.0);
       this.sfx.extraLife();
     }
@@ -482,7 +579,6 @@ export class Game {
       case 'loadout': this.updateLoadout(dt); break;
       case 'playing': this.updatePlaying(dt); break;
       case 'paused': this.updatePaused(); break;
-      case 'respawn': this.updateRespawn(dt); break;
       case 'eraclear': this.updateEraClear(dt); break;
       case 'gameover': this.updateGameOver(dt); break;
       default: break;
@@ -511,7 +607,7 @@ export class Game {
       this.sfx.hit();
     }
 
-    const layout = modeLayout(this.cam.width, this.cam.height);
+    const layout = modeLayout(this.cam.width, this.cam.height, MODES.length);
     this.modeBoxes = layout;
     const touch = this.input.touch;
     let confirmed = false;
@@ -816,29 +912,6 @@ export class Game {
     }
   }
 
-  updateRespawn(dt) {
-    this.effects.update(dt);
-    this.updateWorld(dt);
-    this.stateTimer -= dt;
-    if (this.stateTimer > 0) return;
-
-    this.lives -= 1;
-    if (this.lives <= 0) {
-      this.state = 'gameover';
-      this.stateTimer = 1.0;
-      this.sfx.gameOver();
-      return;
-    }
-    this.rescueChain = 0;
-    // Clear the immediate area, and hold off the next wave, so the player is
-    // not straight back into the fight the instant the shield drops.
-    this.bullets = this.bullets.filter((b) => b.team !== 'enemy');
-    this.enemies = this.enemies.filter((e) => distance(e.x, e.y, this.player.x, this.player.y) > 300);
-    this.spawnTimer = Math.max(this.spawnTimer, 2.2);
-    this.player.reset(this.player.x, this.player.y);
-    this.state = 'playing';
-  }
-
   updatePlaying(dt) {
     if (this.input.wasPressed('pause')) {
       this.state = 'paused';
@@ -846,11 +919,57 @@ export class Game {
     }
     this.updateDebugControls();
 
-    this.player.update(dt, this.input, this);
+    this.updatePlayers(dt);
     this.updateWorld(dt);
     this.updateSpawning(dt);
     this.resolveCollisions();
     this.effects.update(dt);
+  }
+
+  /**
+   * Flies everyone, and brings back whoever is down. A craft going down no
+   * longer stops the world: the rest of the flight keeps fighting, which is
+   * the whole point of having a flight.
+   */
+  updatePlayers(dt) {
+    for (const player of this.players) {
+      if (player.out) continue;
+      if (player.alive) {
+        const wingman = player.local ? null : this.wingmen.find((w) => w.player === player);
+        player.update(dt, wingman ? wingman.control(dt, this) : this.input, this);
+        continue;
+      }
+      player.downTimer -= dt;
+      if (player.downTimer > 0) continue;
+      player.lives -= 1;
+      if (player.lives <= 0) {
+        player.out = true;
+        continue;
+      }
+      this.returnToTheAir(player);
+    }
+
+    if (this.squadOut && this.state === 'playing') {
+      this.state = 'gameover';
+      this.stateTimer = 1.0;
+      this.sfx.gameOver();
+    }
+  }
+
+  /** Puts a craft back in, alongside the flight if there is any of it left. */
+  returnToTheAir(player) {
+    const mate = this.players.find((p) => p !== player && p.flying);
+    const x = mate ? mate.x - Math.cos(mate.angle) * 90 : player.x;
+    const y = mate ? mate.y - Math.sin(mate.angle) * 90 : player.y;
+    player.reset(x, y);
+    if (player.local) this.rescueChain = 0;
+    // Clear the ground around the returning craft only, so one player coming
+    // back does not wipe the sky for everybody.
+    this.bullets = this.bullets.filter(
+      (b) => b.team !== 'enemy' || distance(b.x, b.y, x, y) > 220,
+    );
+    this.enemies = this.enemies.filter((e) => distance(e.x, e.y, x, y) > 260);
+    this.spawnTimer = Math.max(this.spawnTimer, 1.4);
   }
 
   updateWorld(dt) {
@@ -864,7 +983,7 @@ export class Game {
 
     for (const bullet of this.bullets) bullet.update(dt, this);
     this.bullets = this.bullets.filter(
-      (b) => !b.dead && distance(b.x, b.y, this.player.x, this.player.y) < 1200,
+      (b) => !b.dead && distance(b.x, b.y, this.cam.x, this.cam.y) < 1600,
     );
 
     for (const flare of this.flares) flare.update(dt);
@@ -898,9 +1017,11 @@ export class Game {
 
     this.spawnTimer -= dt;
     const era = this.era;
-    const cap = Math.min(era.maxEnemies + cycleAt(this.eraIndex), 12);
+    // The sky has to be busy enough for four craft to have something to do.
+    const scale = this.squadScale(0.5);
+    const cap = Math.round(Math.min(era.maxEnemies + cycleAt(this.eraIndex), 12) * scale);
     if (this.spawnTimer <= 0 && this.enemies.length < cap) {
-      this.spawnTimer = randRange(...era.spawnInterval) / this.difficulty;
+      this.spawnTimer = randRange(...era.spawnInterval) / (this.difficulty * scale);
       this.spawnSquadron(Math.random() < era.squadronChance ? 2 : 1);
     }
 
@@ -1019,31 +1140,34 @@ export class Game {
    * One point of damage. The craft only goes down when its armour runs out,
    * which is what makes the game survivable with a thumb on a touch screen.
    */
-  hitPlayer() {
-    if (this.debugFlags.invincible) return;
-    const outcome = this.player.takeHit();
+  hitPlayer(player = this.player) {
+    if (this.debugFlags.invincible && player.local) return;
+    const outcome = player.takeHit();
     if (outcome === 'ignored') return;
     if (outcome === 'damaged') {
-      this.effects.burst(this.player.x, this.player.y, {
+      this.effects.burst(player.x, player.y, {
         count: 10, speed: 150, life: 0.4, size: 2.6, colors: ['#ff8f8f', '#ffd166', '#ffffff'],
       });
-      this.effects.ring(this.player.x, this.player.y, { radius: 62, life: 0.35, color: '#ff8f8f' });
+      this.effects.ring(player.x, player.y, { radius: 62, life: 0.35, color: '#ff8f8f' });
       this.sfx.hit();
-      this.shake = Math.max(this.shake, 0.45);
+      if (player.local) this.shake = Math.max(this.shake, 0.45);
       return;
     }
-    this.destroyPlayer();
+    this.destroyPlayer(player);
   }
 
-  destroyPlayer() {
-    this.effects.burst(this.player.x, this.player.y, {
+  destroyPlayer(player = this.player) {
+    this.effects.burst(player.x, player.y, {
       count: 30, speed: 240, life: 0.9, size: 4, colors: ['#7cf5ff', '#ffffff', '#ffd166'],
     });
-    this.effects.ring(this.player.x, this.player.y, { radius: 150, life: 0.7, color: '#7cf5ff', width: 5 });
+    this.effects.ring(player.x, player.y, { radius: 150, life: 0.7, color: '#7cf5ff', width: 5 });
     this.sfx.bigExplosion();
-    this.shake = 0.9;
-    this.state = 'respawn';
-    this.stateTimer = 1.9;
+    if (player.local) this.shake = 0.9;
+    if (!player.alive) return;
+    // Called directly (debug, tests): take the craft down properly.
+    player.hp = 0;
+    player.alive = false;
+    player.downTimer = 1.9;
   }
 
   resolveCollisions() {
@@ -1064,43 +1188,49 @@ export class Game {
           this.sfx.hit();
           if (this.boss.hit(bullet.damage)) this.killBoss(this.boss);
         }
-      } else if (this.player.alive && this.player.invulnerable <= 0 && circlesOverlap(bullet, this.player)) {
-        bullet.dead = true;
-        this.hitPlayer();
-        if (!this.player.alive) return;
+      } else {
+        for (const player of this.players) {
+          if (!player.flying || player.invulnerable > 0) continue;
+          if (!circlesOverlap(bullet, player)) continue;
+          bullet.dead = true;
+          this.hitPlayer(player);
+          break;
+        }
       }
     }
 
-    if (!this.player.alive) return;
+    for (const player of this.players) {
+      if (!player.flying) continue;
 
-    for (const enemy of this.enemies) {
-      if (!enemy.dead && circlesOverlap(enemy, this.player)) {
+      for (const enemy of this.enemies) {
+        if (enemy.dead || !circlesOverlap(enemy, player)) continue;
         this.killEnemy(enemy);
-        this.hitPlayer();
-        if (!this.player.alive) return;
+        this.hitPlayer(player);
+        if (!player.flying) break;
       }
-    }
+      if (!player.flying) continue;
 
-    if (this.boss && circlesOverlap(this.boss, this.player)) {
-      this.hitPlayer();
-      if (!this.player.alive) return;
-    }
+      if (this.boss && circlesOverlap(this.boss, player)) {
+        this.hitPlayer(player);
+        if (!player.flying) continue;
+      }
 
-    for (const pickup of this.pickups) {
-      if (pickup.dead || !circlesOverlap(pickup, this.player)) continue;
-      pickup.dead = true;
-      this.collectModule(pickup);
-    }
+      for (const pickup of this.pickups) {
+        if (pickup.dead || !circlesOverlap(pickup, player)) continue;
+        pickup.dead = true;
+        this.collectModule(pickup);
+      }
 
-    for (const chute of this.parachutists) {
-      if (chute.dead || !circlesOverlap(chute, this.player)) continue;
-      chute.dead = true;
-      const bonus = RESCUE_BONUS[Math.min(this.rescueChain, RESCUE_BONUS.length - 1)];
-      this.rescueChain += 1;
-      this.addScore(bonus);
-      this.effects.popup(chute.x, chute.y - 20, `+${bonus}`, '#ffd166');
-      this.effects.ring(chute.x, chute.y, { radius: 60, color: '#ffd166' });
-      this.sfx.rescue();
+      for (const chute of this.parachutists) {
+        if (chute.dead || !circlesOverlap(chute, player)) continue;
+        chute.dead = true;
+        const bonus = RESCUE_BONUS[Math.min(this.rescueChain, RESCUE_BONUS.length - 1)];
+        this.rescueChain += 1;
+        this.addScore(bonus);
+        this.effects.popup(chute.x, chute.y - 20, `+${bonus}`, '#ffd166');
+        this.effects.ring(chute.x, chute.y, { radius: 60, color: '#ffd166' });
+        this.sfx.rescue();
+      }
     }
   }
 
@@ -1125,16 +1255,21 @@ export class Game {
     }
     for (const enemy of this.enemies) enemy.draw(ctx, this.cam, this.time);
     if (this.boss) this.boss.draw(ctx, this.cam, this.time);
+    for (const player of this.players) {
+      if (player.local || !player.flying) continue;
+      player.draw(ctx, this.cam, this.time);
+    }
     this.player.drawLock(ctx, this.cam, this, this.time);
-    this.player.draw(ctx, this.cam, this.time);
+    if (this.player.flying) this.player.draw(ctx, this.cam, this.time);
     for (const bullet of this.bullets) {
       if (bullet.team === 'player') bullet.draw(ctx, this.cam);
     }
-    if (this.player.laserActive > 0 && this.player.alive) {
-      const spec = WEAPONS.laser(this.craft.laser);
-      drawBeam(ctx, this.player, this.cam, {
+    for (const player of this.players) {
+      if (!(player.laserActive > 0) || !player.flying) continue;
+      const spec = WEAPONS.laser(player.craft.laser);
+      drawBeam(ctx, player, this.cam, {
         width: spec.width,
-        strength: Math.min(1, this.player.laserActive / Math.max(spec.duration, 1e-6) + 0.35),
+        strength: Math.min(1, player.laserActive / Math.max(spec.duration, 1e-6) + 0.35),
       });
     }
     this.effects.draw(ctx, this.cam);

@@ -7,7 +7,7 @@
  * the single source of truth for both drawing and hit testing.
  */
 
-import { centeredText, roundedRect, UI_DIM, UI_INK } from '../render/ui.js';
+import { centeredText, roundedRect, UI_DIM, UI_INK, UI_PANEL } from '../render/ui.js';
 
 const DEAD_ZONE = 14;
 

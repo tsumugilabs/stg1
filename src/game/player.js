@@ -27,8 +27,16 @@ const BRAKE_MIN = 0.18;
 const TURN_CEILING = 8;
 
 export class Player {
-  constructor(craftId = DEFAULT_CRAFT) {
+  constructor(craftId = DEFAULT_CRAFT, { local = true, name = 'P1', index = 0 } = {}) {
     this.pods = [];
+    // Which seat this is. Everything else about a craft is identical whether
+    // a person, a wingman or (later) a peer is flying it.
+    this.local = local;
+    this.name = name;
+    this.index = index;
+    this.lives = 0;
+    this.downTimer = 0;
+    this.out = false;
     this.setCraft(craftId);
     this.reset(0, 0);
   }
@@ -71,6 +79,7 @@ export class Player {
     this.hitFlash = 0;
     this.brakeCharge = 1;
     this.braking = false;
+    this.downTimer = 0;
     this.fireTimer = 0;
     this.sinceFired = 99;
     this.trailTimer = 0;
@@ -119,7 +128,13 @@ export class Player {
     }
     this.hp = 0;
     this.alive = false;
+    this.downTimer = 1.9;
     return 'destroyed';
+  }
+
+  /** In the air right now: not destroyed, and not out of craft altogether. */
+  get flying() {
+    return this.alive && !this.out;
   }
 
   /** Throttle setting right now: full, or back on the brake. */

@@ -35,7 +35,7 @@ export class Boss {
   }
 
   update(dt, game) {
-    const player = game.player;
+    const player = game.nearestPlayer(this.x, this.y);
     const toPlayer = Math.atan2(player.y - this.y, player.x - this.x);
     this.angle = turnToward(this.angle, toPlayer, this.turnRate * dt);
     this.x += Math.cos(this.angle) * this.speed * dt;
