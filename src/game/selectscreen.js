@@ -116,8 +116,8 @@ function drawCard(ctx, craft, box, { selected, locked, time, holdRatio }) {
     uiText(ctx, AXES[i].label, barLeft - 2, y + 4, Math.round(8 * scale), UI_DIM, 'right');
     y += Math.max(7, box.h * 0.056);
   }
-  uiText(ctx, `${craft.lives} UP · HIT ${hitboxLabel(craft)}`, cx, y + 8 * scale,
-    Math.round(10 * scale), UI_DIM);
+  uiText(ctx, `ARMOR ${craft.hp} · ${craft.lives} UP · HIT ${hitboxLabel(craft)}`, cx, y + 8 * scale,
+    Math.round(9.5 * scale), UI_DIM);
 }
 
 export function drawSelect(ctx, game, cam) {

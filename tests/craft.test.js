@@ -5,7 +5,7 @@ import { CRAFT, craftById, craftIndexById, flagshipDps, slowestCraft } from '../
 const FIELDS = [
   'id', 'name', 'motif', 'tagline', 'blurb', 'speed', 'turnRate', 'fireCooldown',
   'maxShots', 'bulletSpeed', 'bulletLife', 'bulletRadius', 'bulletColor', 'barrels',
-  'damage', 'pierce', 'radius', 'lives', 'respawnShield', 'colors', 'hidden',
+  'damage', 'pierce', 'radius', 'hp', 'lives', 'respawnShield', 'colors', 'hidden',
 ];
 
 // Everything a pilot could care about, expressed so that higher is better.
@@ -16,6 +16,7 @@ const MERITS = {
   shotsOnScreen: (c) => c.maxShots,
   range: (c) => c.bulletSpeed * c.bulletLife,
   firepower: (c) => flagshipDps(c),
+  armour: (c) => c.hp,
   lives: (c) => c.lives,
   smallHitbox: (c) => -c.radius,
   shield: (c) => c.respawnShield,
@@ -87,6 +88,17 @@ test('Viper stays the balance reference', () => {
   assert.equal(viper.turnRate, 3.6);
   assert.equal(viper.fireCooldown, 0.18);
   assert.equal(viper.hidden, false);
+});
+
+test('armour is what makes a craft survivable, and it is a real trade', () => {
+  // A hit costs a point rather than the craft, so armour is the headline
+  // survivability number; it must vary, and it must be paid for.
+  const armours = CRAFT.map((craft) => craft.hp);
+  assert.ok(Math.min(...armours) >= 4, 'every craft needs enough armour to absorb a mistake');
+  assert.ok(new Set(armours).size > 1, 'identical armour on every craft is not a choice');
+  assert.equal(craftById('viper').hp, 5, 'Viper is the reference: five hits');
+  assert.ok(craftById('eagle').hp > craftById('viper').hp, 'the heavy craft should take more');
+  assert.ok(craftById('dragon').hp < craftById('viper').hp, 'the nimble craft should take less');
 });
 
 test('the slowest craft can still be flown', () => {

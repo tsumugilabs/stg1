@@ -488,7 +488,7 @@ export class Game {
 
     this.spawnTimer -= dt;
     const era = this.era;
-    const cap = Math.min(era.maxEnemies + cycleAt(this.eraIndex), 8);
+    const cap = Math.min(era.maxEnemies + cycleAt(this.eraIndex), 12);
     if (this.spawnTimer <= 0 && this.enemies.length < cap) {
       this.spawnTimer = randRange(...era.spawnInterval) / this.difficulty;
       this.spawnSquadron(Math.random() < era.squadronChance ? 2 : 1);
@@ -557,9 +557,26 @@ export class Game {
     this.sfx.extraLife();
   }
 
-  killPlayer() {
-    if (!this.player.alive || this.player.invulnerable > 0) return;
-    this.player.alive = false;
+  /**
+   * One point of damage. The craft only goes down when its armour runs out,
+   * which is what makes the game survivable with a thumb on a touch screen.
+   */
+  hitPlayer() {
+    const outcome = this.player.takeHit();
+    if (outcome === 'ignored') return;
+    if (outcome === 'damaged') {
+      this.effects.burst(this.player.x, this.player.y, {
+        count: 10, speed: 150, life: 0.4, size: 2.6, colors: ['#ff8f8f', '#ffd166', '#ffffff'],
+      });
+      this.effects.ring(this.player.x, this.player.y, { radius: 62, life: 0.35, color: '#ff8f8f' });
+      this.sfx.hit();
+      this.shake = Math.max(this.shake, 0.45);
+      return;
+    }
+    this.destroyPlayer();
+  }
+
+  destroyPlayer() {
     this.effects.burst(this.player.x, this.player.y, {
       count: 30, speed: 240, life: 0.9, size: 4, colors: ['#7cf5ff', '#ffffff', '#ffd166'],
     });
@@ -590,8 +607,8 @@ export class Game {
         }
       } else if (this.player.alive && this.player.invulnerable <= 0 && circlesOverlap(bullet, this.player)) {
         bullet.dead = true;
-        this.killPlayer();
-        return;
+        this.hitPlayer();
+        if (!this.player.alive) return;
       }
     }
 
@@ -600,14 +617,14 @@ export class Game {
     for (const enemy of this.enemies) {
       if (!enemy.dead && circlesOverlap(enemy, this.player)) {
         this.killEnemy(enemy);
-        this.killPlayer();
-        return;
+        this.hitPlayer();
+        if (!this.player.alive) return;
       }
     }
 
     if (this.boss && circlesOverlap(this.boss, this.player)) {
-      this.killPlayer();
-      return;
+      this.hitPlayer();
+      if (!this.player.alive) return;
     }
 
     for (const chute of this.parachutists) {

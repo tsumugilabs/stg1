@@ -1,3 +1,5 @@
+import { CRAFT_ART } from './craft-art.js';
+
 /**
  * Vector sprites. Every craft is drawn in local space with its nose pointing
  * along +X, so callers only need translate() + rotate(angle).
@@ -92,11 +94,48 @@ const CRAFT_SHAPES = {
   swind: drawSwind,
 };
 
+// Artwork is decoded once at load. Until it is ready — and if a browser
+// refuses the data URI outright — the vector airframes above stand in, so the
+// game is never unplayable because of a picture.
+const CRAFT_IMAGES = {};
+if (typeof Image !== 'undefined') {
+  for (const [id, src] of Object.entries(CRAFT_ART)) {
+    const image = new Image();
+    image.src = src;
+    CRAFT_IMAGES[id] = image;
+  }
+}
+
+/** The artwork is drawn to this wingspan, matching the vector airframes. */
+const ART_SPAN = 32;
+
+function artFor(id) {
+  const image = CRAFT_IMAGES[id];
+  return image && image.complete && image.naturalWidth > 0 ? image : null;
+}
+
 /** Draws a player craft, nose along +X. `id` selects the airframe. */
 export function drawPlayer(ctx, { id = 'viper', colors, thrust = true, time = 0 } = {}) {
   const palette = colors ?? {
     body: '#e9f2ff', wing: '#8fb6e0', wingAlt: '#7aa3d0', glass: '#1c3a5c', accent: '#ffb347',
   };
+
+  const art = artFor(id);
+  if (art) {
+    // The artwork carries its own exhaust, so the flicker is a glow behind it
+    // rather than a second flame.
+    if (thrust) {
+      const glow = 5 + Math.sin(time * 40) * 2.5;
+      ctx.globalAlpha = 0.5;
+      polygon(ctx, [[-ART_SPAN * 0.42, -3], [-ART_SPAN * 0.42 - glow, 0], [-ART_SPAN * 0.42, 3]], palette.accent);
+      ctx.globalAlpha = 1;
+    }
+    const scale = ART_SPAN / art.naturalHeight;
+    const width = art.naturalWidth * scale;
+    ctx.drawImage(art, -width / 2, -ART_SPAN / 2, width, ART_SPAN);
+    return;
+  }
+
   if (thrust) {
     const flicker = 6 + Math.sin(time * 40) * 3;
     drawExhaust(ctx, id === 'eagle' ? -16 : -15, flicker + 7, palette);

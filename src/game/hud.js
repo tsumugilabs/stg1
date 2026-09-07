@@ -21,34 +21,98 @@ function panel(ctx, x, y, w, h, alpha = 0.35) {
   ctx.globalAlpha = 1;
 }
 
-/** Points an arrow at the flagship while it is off screen. */
-function bossArrow(ctx, game, cam) {
-  const boss = game.boss;
-  if (!boss) return;
-  const sx = boss.x - cam.x + cam.width / 2;
-  const sy = boss.y - cam.y + cam.height / 2;
-  const margin = 46;
-  if (sx > margin && sx < cam.width - margin && sy > margin && sy < cam.height - margin) return;
-
-  const angle = Math.atan2(boss.y - cam.y, boss.x - cam.x);
+/** Where a point off screen would cross the edge of the view. */
+function edgePoint(cam, x, y, margin) {
+  const angle = Math.atan2(y - cam.y, x - cam.x);
   const rx = cam.width / 2 - margin;
   const ry = cam.height / 2 - margin;
-  const scale = Math.min(rx / Math.abs(Math.cos(angle) || 1e-6), ry / Math.abs(Math.sin(angle) || 1e-6));
-  const px = cam.width / 2 + Math.cos(angle) * scale;
-  const py = cam.height / 2 + Math.sin(angle) * scale;
+  const reach = Math.min(
+    rx / Math.abs(Math.cos(angle) || 1e-6),
+    ry / Math.abs(Math.sin(angle) || 1e-6),
+  );
+  return {
+    x: cam.width / 2 + Math.cos(angle) * reach,
+    y: cam.height / 2 + Math.sin(angle) * reach,
+    angle,
+  };
+}
 
+function isOffScreen(cam, x, y, margin) {
+  const sx = x - cam.x + cam.width / 2;
+  const sy = y - cam.y + cam.height / 2;
+  return sx < margin || sx > cam.width - margin || sy < margin || sy > cam.height - margin;
+}
+
+/**
+ * Off-screen markers. Escorts get a small, quiet chevron in the era's own
+ * colour; the flagship gets a large red arrowhead with a pulsing ring behind
+ * it, so at a glance you can tell what is closing on you and from where.
+ */
+function offScreenMarkers(ctx, game, cam) {
+  const margin = 34;
+
+  let shown = 0;
+  for (const enemy of game.enemies) {
+    if (enemy.dead || shown >= 12) continue;
+    if (!isOffScreen(cam, enemy.x, enemy.y, margin + 12)) continue;
+    shown += 1;
+    const at = edgePoint(cam, enemy.x, enemy.y, margin);
+    ctx.save();
+    ctx.translate(at.x, at.y);
+    ctx.rotate(at.angle);
+    ctx.globalAlpha = 0.6;
+    ctx.fillStyle = game.era.colors.body;
+    ctx.beginPath();
+    ctx.moveTo(8, 0);
+    ctx.lineTo(-5, 5);
+    ctx.lineTo(-2, 0);
+    ctx.lineTo(-5, -5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+
+  const boss = game.boss;
+  if (!boss || !isOffScreen(cam, boss.x, boss.y, 52)) return;
+  const at = edgePoint(cam, boss.x, boss.y, 48);
+  const pulse = 0.6 + Math.sin(game.time * 8) * 0.35;
   ctx.save();
-  ctx.translate(px, py);
-  ctx.rotate(angle);
-  ctx.globalAlpha = 0.55 + Math.sin(game.time * 8) * 0.3;
-  ctx.fillStyle = '#ff6b6b';
+  ctx.translate(at.x, at.y);
+  ctx.globalAlpha = pulse * 0.5;
+  ctx.strokeStyle = '#ff6b6b';
+  ctx.lineWidth = 2.5;
   ctx.beginPath();
-  ctx.moveTo(14, 0);
-  ctx.lineTo(-10, 9);
-  ctx.lineTo(-10, -9);
+  ctx.arc(0, 0, 19, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.rotate(at.angle);
+  ctx.globalAlpha = Math.min(1, pulse + 0.35);
+  ctx.fillStyle = '#ff5a5a';
+  ctx.beginPath();
+  ctx.moveTo(19, 0);
+  ctx.lineTo(-11, 12);
+  ctx.lineTo(-5, 0);
+  ctx.lineTo(-11, -12);
   ctx.closePath();
   ctx.fill();
   ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+/** Armour remaining on the current craft, as one pip per point. */
+function armourGauge(ctx, game, x, y) {
+  const player = game.player;
+  const pipWidth = 15;
+  const gap = 3;
+  label(ctx, 'ARMOR', x, y - 8, { size: 10, color: DIM });
+  for (let i = 0; i < player.maxHp; i += 1) {
+    const left = x + i * (pipWidth + gap);
+    const held = i < player.hp;
+    ctx.globalAlpha = held ? 1 : 0.28;
+    ctx.fillStyle = held ? (player.hp <= 2 ? '#ff6b6b' : '#7cf5ff') : '#22344a';
+    ctx.fillRect(left, y, pipWidth, 7);
+    ctx.globalAlpha = 1;
+  }
 }
 
 function centeredMessage(ctx, cam, lines) {
@@ -83,16 +147,18 @@ export function drawHud(ctx, game, cam) {
   label(ctx, w < 760 ? era.label : `${era.label}  ${era.subtitle}`, w - 16, 27,
     { size: 15, color: DIM, align: 'right' });
 
-  // Remaining lives, drawn with the actual player sprite.
+  armourGauge(ctx, game, 18, h - 30);
+
+  // Spare craft, drawn with the actual player sprite.
   for (let i = 0; i < Math.min(game.lives, 6); i += 1) {
     ctx.save();
-    ctx.translate(26 + i * 30, h - 26);
+    ctx.translate(26 + i * 30, h - 62);
     ctx.scale(0.62, 0.62);
     ctx.rotate(-Math.PI / 2);
     drawPlayer(ctx, { id: game.craft.id, colors: game.craft.colors, thrust: false });
     ctx.restore();
   }
-  if (game.lives > 6) label(ctx, `x${game.lives}`, 26 + 6 * 30, h - 20, { size: 15, color: DIM });
+  if (game.lives > 6) label(ctx, `x${game.lives}`, 26 + 6 * 30, h - 56, { size: 15, color: DIM });
 
   if (game.boss) {
     const bw = 260;
@@ -103,7 +169,6 @@ export function drawHud(ctx, game, cam) {
     ctx.fillRect(bx, h - 28, bw, 8);
     ctx.fillStyle = '#ff6b6b';
     ctx.fillRect(bx, h - 28, bw * clamp(game.boss.hp / game.boss.maxHp, 0, 1), 8);
-    bossArrow(ctx, game, cam);
   } else {
     const progress = clamp(game.kills / game.quota, 0, 1);
     const bw = 200;
@@ -117,6 +182,10 @@ export function drawHud(ctx, game, cam) {
 
   if (game.rescueChain > 0) {
     label(ctx, `RESCUE x${game.rescueChain}`, w - 16, h - 22, { size: 14, color: '#ffd166', align: 'right' });
+  }
+
+  if (game.state === 'playing' || game.state === 'paused' || game.state === 'respawn') {
+    offScreenMarkers(ctx, game, cam);
   }
 
   switch (game.state) {

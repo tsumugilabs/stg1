@@ -67,7 +67,10 @@ test('the opening era is an introduction, not a fight', () => {
   const first = ERAS[0];
   const slowest = slowestCraft();
   const widest = widestTurningCraft();
-  assert.ok(first.maxEnemies <= 2, 'more than two escorts at once is not an introduction');
+  // The opening is gentle because the escorts are slow enough to read, not
+  // because there are only a couple of them: a busy but sluggish sky is
+  // easier to fly through with a thumb than an empty but quick one.
+  assert.ok(first.maxEnemies <= 4, 'more than four escorts at once is not an introduction');
   assert.ok(first.enemySpeed < slowest.speed * 0.5, 'every craft must comfortably outrun the first escorts');
   assert.ok(first.enemyTurn < widest.turnRate * 0.4, 'every craft must comfortably out-turn them');
   assert.ok(first.fireInterval[0] >= 3, 'the first escorts should rarely shoot');
