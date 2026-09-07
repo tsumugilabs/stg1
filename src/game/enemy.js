@@ -26,7 +26,7 @@ export class Enemy {
   }
 
   update(dt, game) {
-    const player = game.player;
+    const player = game.nearestPlayer(this.x, this.y);
     const toPlayer = Math.atan2(player.y - this.y, player.x - this.x);
     this.wobblePhase += this.wobbleRate * dt;
     // A stealth craft that is holding its fire cannot be found: escorts keep

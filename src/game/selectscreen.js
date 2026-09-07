@@ -177,18 +177,25 @@ export function drawSelect(ctx, game, cam) {
 }
 
 /** Mode select: two cards, drawn and hit-tested from the same boxes. */
-export function modeLayout(width, height) {
-  const cardW = Math.min(width * 0.40, 300);
-  const cardH = Math.min(cardW * 0.72, height * 0.34);
-  const gap = Math.max(12, width * 0.03);
-  const left = (width - (cardW * 2 + gap)) / 2;
-  const top = height * 0.34;
-  return {
-    cards: [
-      { x: left, y: top, w: cardW, h: cardH },
-      { x: left + cardW + gap, y: top, w: cardW, h: cardH },
-    ],
-  };
+export function modeLayout(width, height, count = 3) {
+  const columns = width < 700 ? 1 : count;
+  const rows = Math.ceil(count / columns);
+  const gap = Math.max(10, width * 0.022);
+  const cardW = Math.min((width * 0.88 - gap * (columns - 1)) / columns, 300);
+  const cardH = Math.min(cardW * 0.72, (height * 0.5 - gap * (rows - 1)) / rows);
+  const gridW = columns * cardW + (columns - 1) * gap;
+  const left = (width - gridW) / 2;
+  const top = height * 0.30;
+  const cards = [];
+  for (let i = 0; i < count; i += 1) {
+    cards.push({
+      x: left + (i % columns) * (cardW + gap),
+      y: top + Math.floor(i / columns) * (cardH + gap),
+      w: cardW,
+      h: cardH,
+    });
+  }
+  return { cards };
 }
 
 export const MODES = [
@@ -197,6 +204,12 @@ export const MODES = [
     name: 'ARCADE',
     blurb: '素の機体で挑む、調整済みのスコアアタック。',
     detail: '装備もドロップもなし。バランスは固定されています。',
+  },
+  {
+    id: 'squadron',
+    name: 'SQUADRON',
+    blurb: '4機編隊で飛ぶ。',
+    detail: '僚機3機とともに出撃します (現在はAI操縦)。',
   },
   {
     id: 'sortie',
@@ -208,7 +221,7 @@ export const MODES = [
 
 export function drawModeSelect(ctx, game, cam) {
   const { width: w, height: h } = cam;
-  const layout = game.modeBoxes ?? modeLayout(w, h);
+  const layout = game.modeBoxes ?? modeLayout(w, h, MODES.length);
 
   ctx.globalAlpha = 0.72;
   ctx.fillStyle = UI_PANEL;
@@ -237,9 +250,9 @@ export function drawModeSelect(ctx, game, cam) {
   });
 
   const owned = game.locker.length;
-  if (game.modeIndex === 1 && owned > 0) {
-    uiText(ctx, `保管庫: ${owned} パーツ`, w / 2, layout.cards[0].y + layout.cards[0].h + 34, 13, '#7cf5ff');
+  if (MODES[game.modeIndex].id === 'sortie' && owned > 0) {
+    uiText(ctx, `保管庫: ${owned} パーツ`, w / 2, layout.cards[layout.cards.length - 1].y + layout.cards[0].h + 34, 13, '#7cf5ff');
   }
   uiText(ctx, game.touchMode ? 'モードをタップして決定' : '←  →  で選択 ・ ENTER で決定',
-    w / 2, layout.cards[0].y + layout.cards[0].h + 62, 14, UI_DIM);
+    w / 2, layout.cards[layout.cards.length - 1].y + layout.cards[0].h + 62, 14, UI_DIM);
 }
