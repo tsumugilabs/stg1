@@ -7,12 +7,23 @@ import { Enemy } from './enemy.js';
 import { Parachutist } from './parachutist.js';
 import { Player } from './player.js';
 import { drawHud } from './hud.js';
-import { cardAt, inStart, selectLayout } from './selectscreen.js';
+import { cardAt, inStart, MODES, modeLayout, selectLayout } from './selectscreen.js';
+import { loadoutLayout, ROWS_VISIBLE, rowAt } from './loadout.js';
 import { CRAFT, craftIndexById, DEFAULT_CRAFT } from './craft.js';
+import {
+  MODULES, makePart, partScore, resolveCraft, rollModule, SLOTS,
+} from './gear.js';
+import { ModulePickup } from './pickup.js';
 import { cycleAt, difficultyAt, eraAt, ERAS } from './levels.js';
 
 const HIGH_SCORE_KEY = 'chronopilot.highscore';
 const CRAFT_KEY = 'chronopilot.craft';
+const MODE_KEY = 'chronopilot.mode';
+const LOCKER_KEY = 'chronopilot.locker';
+const LOADOUT_KEY = 'chronopilot.loadout';
+const LOCKER_LIMIT = 60;
+/** Chance an escort coughs up a module when it goes down, in SORTIE. */
+const MODULE_DROP_CHANCE = 0.07;
 const UNLOCK_KEY = 'chronopilot.unlocked';
 // Up, up, down, down, left, right, left, right, B, A.
 const CHEAT = [
@@ -36,6 +47,23 @@ function writeHighScore(value) {
     localStorage.setItem(HIGH_SCORE_KEY, String(value));
   } catch {
     /* storage can be unavailable in private mode; the score just is not kept */
+  }
+}
+
+function readJson(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJson(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* a full or disabled store just means the locker is not kept */
   }
 }
 
@@ -69,6 +97,7 @@ export class Game {
     this.enemies = [];
     this.bullets = [];
     this.parachutists = [];
+    this.pickups = [];
     this.boss = null;
 
     this.cam = { x: 0, y: 0, width: canvas.width, height: canvas.height, era: eraAt(0) };
@@ -81,6 +110,21 @@ export class Game {
     this.cheatProgress = 0;
     this.holdTimer = 0;
     this.selectBoxes = null;
+    this.mode = readStored(MODE_KEY, 'arcade') === 'sortie' ? 'sortie' : 'arcade';
+    this.locker = readJson(LOCKER_KEY, []);
+    this.loadout = readJson(LOADOUT_KEY, {});
+    this.modules = [];
+    this.resolvedCraft = null;
+    this.lootBanner = '';
+    this.lootTimer = 0;
+    this.modeIndex = this.mode === 'sortie' ? 1 : 0;
+    this.modeBoxes = null;
+    this.loadoutBoxes = null;
+    this.loadoutPane = 'slots';
+    this.slotIndex = 0;
+    this.partIndex = 0;
+    this.listOffset = 0;
+    this.holdPart = 0;
     this.unlockFlash = 0;
     this.state = 'title';
     this.time = 0;
@@ -101,8 +145,32 @@ export class Game {
     this.spawnRadius = Math.hypot(this.canvas.width, this.canvas.height) / 2 + 70;
   }
 
+  /** Statistics actually flown: airframe, plus equipment, plus modules. */
   get craft() {
+    return this.resolvedCraft ?? CRAFT[this.craftIndex];
+  }
+
+  /** The airframe itself, before anything is bolted to it. */
+  get baseCraft() {
     return CRAFT[this.craftIndex];
+  }
+
+  get sortie() {
+    return this.mode === 'sortie';
+  }
+
+  /** Parts fitted right now, in slot order. ARCADE flies bare. */
+  equippedParts() {
+    if (!this.sortie) return [];
+    return SLOTS.map((slot) => this.locker.find((part) => part.id === this.loadout[slot.id]) ?? null);
+  }
+
+  /** Recomputes effective statistics and hands them to the craft in flight. */
+  rebuildCraft({ inFlight = false } = {}) {
+    this.resolvedCraft = resolveCraft(this.baseCraft, this.equippedParts(), this.modules);
+    if (inFlight) this.player.applyCraft(this.resolvedCraft);
+    else this.player.setCraft(this.resolvedCraft);
+    return this.resolvedCraft;
   }
 
   /** Craft the select screen may actually start with. */
@@ -130,9 +198,12 @@ export class Game {
   // --- run / era lifecycle -------------------------------------------------
 
   resetRun() {
-    this.player.setCraft(this.craft.id);
+    this.modules = [];
+    this.rebuildCraft();
     this.score = 0;
     this.lives = this.craft.lives;
+    this.lootBanner = '';
+    this.lootTimer = 0;
     this.eraIndex = 0;
     this.nextExtraLife = EXTRA_LIFE_EVERY;
     this.rescueChain = 0;
@@ -146,6 +217,7 @@ export class Game {
     this.enemies.length = 0;
     this.bullets.length = 0;
     this.parachutists.length = 0;
+    this.pickups.length = 0;
     this.boss = null;
     this.effects.clear();
     this.spawnTimer = randRange(...era.spawnInterval);
@@ -303,6 +375,7 @@ export class Game {
   update(dt) {
     this.time += dt;
     if (this.bannerTimer > 0) this.bannerTimer -= dt;
+    if (this.lootTimer > 0) this.lootTimer -= dt;
     if (this.shake > 0) this.shake = Math.max(0, this.shake - dt * 2.6);
     this.background.update(dt);
 
@@ -311,7 +384,9 @@ export class Game {
 
     switch (this.state) {
       case 'title': this.updateTitle(dt); break;
+      case 'mode': this.updateMode(dt); break;
       case 'select': this.updateSelect(dt); break;
+      case 'loadout': this.updateLoadout(dt); break;
       case 'playing': this.updatePlaying(dt); break;
       case 'paused': this.updatePaused(); break;
       case 'respawn': this.updateRespawn(dt); break;
@@ -325,14 +400,146 @@ export class Game {
 
   updateTitle(dt) {
     // The attract screen keeps the plane cruising so the sky keeps scrolling.
+    this.driftAttract(dt);
+    this.updateCheat(dt);
+    if (this.input.wantsStart()) {
+      this.state = 'mode';
+      this.stateTimer = 0;
+    }
+  }
+
+  /** ARCADE or SORTIE. The choice is remembered between sessions. */
+  updateMode(dt) {
+    this.driftAttract(dt);
+    this.updateCheat();
+    const step = (this.input.wasPressed('right') ? 1 : 0) - (this.input.wasPressed('left') ? 1 : 0);
+    if (step !== 0) {
+      this.modeIndex = (this.modeIndex + step + MODES.length) % MODES.length;
+      this.sfx.hit();
+    }
+
+    const layout = modeLayout(this.cam.width, this.cam.height);
+    this.modeBoxes = layout;
+    const touch = this.input.touch;
+    let confirmed = false;
+    if (touch && touch.tapPoint) {
+      const card = rowAt(touch.tapPoint, layout.cards);
+      if (card !== -1) {
+        if (card === this.modeIndex) confirmed = true;
+        else { this.modeIndex = card; this.sfx.hit(); }
+      }
+    }
+
+    if (this.input.wasPressed('start') || this.input.wasPressed('fire') || confirmed) {
+      this.mode = MODES[this.modeIndex].id;
+      writeStored(MODE_KEY, this.mode);
+      this.rebuildCraft();
+      this.state = 'select';
+    }
+    if (this.input.wasPressed('pause')) this.state = 'title';
+  }
+
+  /** Shared by every attract-style screen: keep the sky moving underneath. */
+  driftAttract(dt) {
     this.player.angle += 0.16 * dt;
     this.player.x += Math.cos(this.player.angle) * 90 * dt;
     this.player.y += Math.sin(this.player.angle) * 90 * dt;
-    this.updateCheat(dt);
-    if (this.input.wantsStart()) {
-      this.state = 'select';
-      this.stateTimer = 0;
+  }
+
+  /** Parts in the locker that fit the highlighted slot, best first. */
+  slotCandidates() {
+    const slot = SLOTS[this.slotIndex].id;
+    return this.locker
+      .filter((part) => part.slot === slot)
+      .sort((a, b) => partScore(b) - partScore(a));
+  }
+
+  updateLoadout(dt) {
+    this.driftAttract(dt);
+    const layout = loadoutLayout(this.cam.width, this.cam.height);
+    this.loadoutBoxes = layout;
+    const candidates = this.slotCandidates();
+    const touch = this.input.touch;
+
+    if (this.input.wasPressed('left')) this.loadoutPane = 'slots';
+    if (this.input.wasPressed('right') && candidates.length) this.loadoutPane = 'parts';
+
+    const step = (this.input.wasPressed('down') ? 1 : 0) - (this.input.wasPressed('up') ? 1 : 0);
+    if (step !== 0) {
+      if (this.loadoutPane === 'slots') {
+        this.slotIndex = (this.slotIndex + step + SLOTS.length) % SLOTS.length;
+        this.partIndex = 0;
+        this.listOffset = 0;
+      } else if (candidates.length) {
+        this.partIndex = clamp(this.partIndex + step, 0, candidates.length - 1);
+      }
+      this.sfx.hit();
     }
+
+    if (touch && touch.tapPoint) {
+      const slot = rowAt(touch.tapPoint, layout.slots);
+      const row = rowAt(touch.tapPoint, layout.rows);
+      if (slot !== -1) {
+        this.slotIndex = slot;
+        this.partIndex = 0;
+        this.listOffset = 0;
+        this.loadoutPane = 'slots';
+        this.sfx.hit();
+      } else if (row !== -1 && candidates[this.listOffset + row]) {
+        this.partIndex = this.listOffset + row;
+        this.loadoutPane = 'parts';
+        this.equipHighlighted();
+      } else if (rowAt(touch.tapPoint, [layout.back]) === 0) {
+        this.state = 'select';
+      }
+    }
+
+    // Long press on a part scraps it, for players with no keyboard.
+    const holdingPart = touch && touch.holdPoint
+      && rowAt(touch.holdPoint, layout.rows) !== -1
+      && this.loadoutPane === 'parts';
+    this.holdPart = holdingPart ? this.holdPart + dt : 0;
+    if (this.holdPart >= 1.2) {
+      this.holdPart = 0;
+      this.discardHighlighted();
+    }
+
+    if (this.input.wasPressed('start') || this.input.wasPressed('fire')) {
+      if (this.loadoutPane === 'slots' && candidates.length) this.loadoutPane = 'parts';
+      else this.equipHighlighted();
+    }
+    if (this.input.wasPressed('discard')) this.discardHighlighted();
+    if (this.input.wasPressed('pause')) this.state = 'select';
+
+    // Keep the highlighted row on screen.
+    this.partIndex = clamp(this.partIndex, 0, Math.max(0, candidates.length - 1));
+    this.listOffset = clamp(this.listOffset, this.partIndex - ROWS_VISIBLE + 1, this.partIndex);
+    this.listOffset = Math.max(0, this.listOffset);
+  }
+
+  equipHighlighted() {
+    const slot = SLOTS[this.slotIndex].id;
+    const part = this.slotCandidates()[this.partIndex];
+    if (!part) return;
+    this.loadout[slot] = this.loadout[slot] === part.id ? undefined : part.id;
+    if (!this.loadout[slot]) delete this.loadout[slot];
+    writeJson(LOADOUT_KEY, this.loadout);
+    this.rebuildCraft();
+    this.sfx.rescue();
+  }
+
+  discardHighlighted() {
+    const part = this.slotCandidates()[this.partIndex];
+    if (!part) return;
+    if (this.loadout[SLOTS[this.slotIndex].id] === part.id) {
+      delete this.loadout[SLOTS[this.slotIndex].id];
+      writeJson(LOADOUT_KEY, this.loadout);
+    }
+    this.locker = this.locker.filter((item) => item.id !== part.id);
+    writeJson(LOCKER_KEY, this.locker);
+    this.rebuildCraft();
+    this.showLoot(`${part.name} を破棄`);
+    this.sfx.hit();
   }
 
   /**
@@ -341,15 +548,17 @@ export class Game {
    * holding it down is the touch equivalent of the keyboard cheat.
    */
   updateSelect(dt) {
-    this.player.angle += 0.16 * dt;
-    this.player.x += Math.cos(this.player.angle) * 90 * dt;
-    this.player.y += Math.sin(this.player.angle) * 90 * dt;
+    this.driftAttract(dt);
     this.updateCheat(dt);
+    if (this.sortie && this.input.wasPressed('down')) {
+      this.state = 'loadout';
+      return;
+    }
 
     const step = (this.input.wasPressed('right') ? 1 : 0) - (this.input.wasPressed('left') ? 1 : 0);
     if (step !== 0) {
       this.craftIndex = (this.craftIndex + step + CRAFT.length) % CRAFT.length;
-      this.player.setCraft(this.craft.id);
+      this.rebuildCraft();
       this.sfx.hit();
     }
 
@@ -363,7 +572,7 @@ export class Game {
       const card = cardAt(touch.tapPoint, layout);
       if (card !== -1 && card !== this.craftIndex) {
         this.craftIndex = card;
-        this.player.setCraft(this.craft.id);
+        this.rebuildCraft();
         this.sfx.hit();
       } else if (card === this.craftIndex || inStart(touch.tapPoint, layout)) {
         tappedStart = true;
@@ -386,10 +595,10 @@ export class Game {
       || tappedStart
       || (this.input.wasPressed('fire') && this.isSelectable(this.craft));
     if (launch && this.isSelectable(this.craft)) {
-      writeStored(CRAFT_KEY, this.craft.id);
+      writeStored(CRAFT_KEY, this.baseCraft.id);
       this.startNewGame();
     }
-    if (this.input.wasPressed('pause')) this.state = 'title';
+    if (this.input.wasPressed('pause')) this.state = 'mode';
   }
 
   /** The old arcade sequence, still good for opening the locked slot. */
@@ -482,6 +691,9 @@ export class Game {
 
     for (const chute of this.parachutists) chute.update(dt);
     this.parachutists = this.parachutists.filter((p) => !p.dead);
+
+    for (const pickup of this.pickups) pickup.update(dt);
+    this.pickups = this.pickups.filter((p) => !p.dead);
   }
 
   updateSpawning(dt) {
@@ -512,6 +724,8 @@ export class Game {
       this.parachutists.push(new Parachutist(enemy.x, enemy.y));
     }
 
+    if (this.sortie && Math.random() < MODULE_DROP_CHANCE) this.dropModule(enemy.x, enemy.y);
+
     // A blast from a kill takes anything alongside it, but the chain stops
     // there: secondary kills do not set off blasts of their own.
     const blast = this.craft.killBlast;
@@ -527,8 +741,54 @@ export class Game {
     }
   }
 
+  /** Shakes a module loose, unless every module is already at its limit. */
+  dropModule(x, y) {
+    if (this.pickups.length >= 4) return;
+    const id = rollModule(this.modules);
+    if (!id) return;
+    this.pickups.push(new ModulePickup(x, y, id));
+  }
+
+  collectModule(pickup) {
+    this.modules.push(pickup.moduleId);
+    this.rebuildCraft({ inFlight: true });
+    const module = MODULES[pickup.moduleId];
+    this.effects.popup(pickup.x, pickup.y - 22, module.name, module.color);
+    this.effects.ring(pickup.x, pickup.y, { radius: 90, color: module.color, life: 0.5 });
+    this.sfx.rescue();
+    this.showLoot(`${module.name} — ${module.blurb}`);
+  }
+
+  showLoot(text) {
+    this.lootBanner = text;
+    this.lootTimer = 3.2;
+  }
+
+  /**
+   * Every flagship yields a part, and the deeper the run the better the odds.
+   * When the locker is full the weakest thing not currently fitted is scrapped
+   * to make room, so a good drop is never lost to housekeeping.
+   */
+  awardPart() {
+    const part = makePart({ depth: this.eraIndex });
+    if (this.locker.length >= LOCKER_LIMIT) {
+      const fitted = new Set(Object.values(this.loadout));
+      const spare = this.locker
+        .filter((item) => !fitted.has(item.id))
+        .sort((a, b) => partScore(a) - partScore(b))[0];
+      if (spare) this.locker = this.locker.filter((item) => item !== spare);
+    }
+    if (this.locker.length < LOCKER_LIMIT) {
+      this.locker.push(part);
+      writeJson(LOCKER_KEY, this.locker);
+      this.showLoot(`${part.name} を入手`);
+    }
+    return part;
+  }
+
   killBoss(boss) {
     this.addScore(boss.score);
+    if (this.sortie) this.awardPart();
     for (let i = 0; i < 5; i += 1) {
       this.effects.burst(
         boss.x + randRange(-40, 40),
@@ -628,6 +888,12 @@ export class Game {
       if (!this.player.alive) return;
     }
 
+    for (const pickup of this.pickups) {
+      if (pickup.dead || !circlesOverlap(pickup, this.player)) continue;
+      pickup.dead = true;
+      this.collectModule(pickup);
+    }
+
     for (const chute of this.parachutists) {
       if (chute.dead || !circlesOverlap(chute, this.player)) continue;
       chute.dead = true;
@@ -654,6 +920,7 @@ export class Game {
     this.background.draw(ctx, this.cam);
 
     for (const chute of this.parachutists) chute.draw(ctx, this.cam);
+    for (const pickup of this.pickups) pickup.draw(ctx, this.cam);
     for (const bullet of this.bullets) {
       if (bullet.team === 'enemy') bullet.draw(ctx, this.cam);
     }

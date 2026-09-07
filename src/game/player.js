@@ -18,11 +18,25 @@ export class Player {
     this.reset(0, 0);
   }
 
-  setCraft(craftId) {
-    this.craft = craftById(craftId);
+  setCraft(craft) {
+    this.craft = typeof craft === 'string' ? craftById(craft) : craft;
     // The hitbox is deliberately well inside the sprite: a near miss should
     // read as a near miss, not a death.
     this.radius = this.craft.radius;
+  }
+
+  /**
+   * Swaps in new statistics without interrupting the flight, which is what a
+   * module picked up mid-run needs. Armour gained is granted rather than
+   * merely raising the ceiling, so the pickup is felt immediately.
+   */
+  applyCraft(craft) {
+    const gained = Math.max(0, craft.hp - this.maxHp);
+    this.setCraft(craft);
+    this.maxHp = craft.hp;
+    this.hp = Math.min(this.maxHp, this.hp + gained);
+    if (craft.pod && !this.pod) this.pod = { x: this.x, y: this.y, angle: this.angle, fireTimer: 0.6 };
+    if (!craft.pod) this.pod = null;
   }
 
   reset(x, y) {

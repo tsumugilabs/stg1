@@ -5,6 +5,7 @@ import { TouchControls } from './core/touch.js';
 import { Game } from './game/game.js';
 import { drawEnemy } from './render/sprites.js';
 import { ERAS } from './game/levels.js';
+import { makePart, MODULES, RARITIES } from './game/gear.js';
 
 const canvas = document.getElementById('screen');
 
@@ -54,6 +55,9 @@ window.addEventListener('pointerdown', unlockAudio);
 window.game = game;
 window.__drawEnemy = drawEnemy;
 window.__eras = ERAS;
+window.__makePart = makePart;
+window.__modules = MODULES;
+window.__rarities = RARITIES;
 
 function handleResize() {
   fitCanvas();
