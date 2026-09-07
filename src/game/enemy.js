@@ -29,7 +29,12 @@ export class Enemy {
     const player = game.player;
     const toPlayer = Math.atan2(player.y - this.y, player.x - this.x);
     this.wobblePhase += this.wobbleRate * dt;
-    const target = toPlayer + Math.sin(this.wobblePhase) * 0.28;
+    // A stealth craft that is holding its fire cannot be found: escorts keep
+    // whatever heading they were on and drift, rather than converging.
+    const lost = player.hidden;
+    const target = lost
+      ? this.angle + Math.sin(this.wobblePhase) * 0.5
+      : toPlayer + Math.sin(this.wobblePhase) * 0.28;
     this.angle = turnToward(this.angle, target, this.turnRate * dt);
 
     this.x += Math.cos(this.angle) * this.speed * dt;
@@ -41,7 +46,7 @@ export class Enemy {
     // Escorts only fire inside the reach of their own guns, which in the
     // opening eras is barely longer than the aircraft itself.
     const reach = this.era.bulletRange * this.rangeScale;
-    if (this.fireTimer <= 0 && aimed && player.alive
+    if (this.fireTimer <= 0 && aimed && player.alive && !lost
         && range < reach * 1.05 && range > reach * 0.15) {
       this.fireTimer = randRange(...this.era.fireInterval);
       game.fireEnemyBullet(this.x, this.y, this.angle, this.era.bulletSpeed, reach);

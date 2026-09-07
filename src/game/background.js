@@ -24,6 +24,15 @@ function puff(ctx, x, y, size, color, alpha) {
   ctx.globalAlpha = 1;
 }
 
+/**
+ * Whether one window of one building is lit. Depends only on the building's
+ * grid cell and the window's position within it, so a tower looks the same
+ * every frame however the camera moves past it.
+ */
+export function litWindow(ix, iy, column, row) {
+  return hash2(ix * 73856093 + column, iy * 19349663 + row, 91) > 0.62;
+}
+
 const SCENERY = {
   clouds(ctx, x, y, size, alpha) {
     puff(ctx, x, y, size, '#ffffff', alpha * 0.9);
@@ -40,7 +49,7 @@ const SCENERY = {
     ctx.fill();
     ctx.globalAlpha = 1;
   },
-  city(ctx, x, y, size, alpha, rand) {
+  city(ctx, x, y, size, alpha, rand, ix, iy) {
     const w = size * 1.5;
     const h = size * 2.6;
     ctx.globalAlpha = alpha;
@@ -53,7 +62,10 @@ const SCENERY = {
     const rows = Math.max(3, Math.floor(h / 12));
     for (let cx = 0; cx < cols; cx += 1) {
       for (let cy = 0; cy < rows; cy += 1) {
-        if (hash2(cx + Math.round(x), cy + Math.round(y), rand) > 0.62) {
+        // Which windows are lit must come from the building's own cell, never
+        // from where it happens to sit on screen: screen coordinates change
+        // every frame as the camera moves, and the lights flicker.
+        if (litWindow(ix, iy, cx, cy)) {
           ctx.fillRect(x - w / 2 + 3 + cx * 9, y - h / 2 + 6 + cy * 12, 4, 6);
         }
       }
@@ -118,7 +130,7 @@ export class Background {
           const px = ix * layer.cell + hash2(ix, iy, layer.seed + 1) * layer.cell;
           const py = iy * layer.cell + hash2(ix, iy, layer.seed + 2) * layer.cell;
           const size = (16 + hash2(ix, iy, layer.seed + 3) * 26) * layer.scale;
-          draw(ctx, px - ox, py - oy, size, layer.alpha, hash2(ix, iy, layer.seed + 4));
+          draw(ctx, px - ox, py - oy, size, layer.alpha, hash2(ix, iy, layer.seed + 4), ix, iy);
         }
       }
     }

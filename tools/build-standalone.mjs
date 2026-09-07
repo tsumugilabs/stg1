@@ -39,6 +39,7 @@ const MODULES = [
   'src/game/parachutist.js',
   'src/game/selectscreen.js',
   'src/game/loadout.js',
+  'src/game/debug.js',
   'src/game/hud.js',
   'src/game/game.js',
   'src/main.js',
