@@ -20,6 +20,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const MODULES = [
   'src/core/math.js',
   'src/core/loop.js',
+  'src/render/craft-art.js',
   'src/render/sprites.js',
   'src/render/ui.js',
   'src/core/input.js',

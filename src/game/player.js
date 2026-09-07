@@ -9,6 +9,9 @@ import { craftById, DEFAULT_CRAFT } from './craft.js';
  * Every performance figure comes from the craft table, so switching airframes
  * is the only thing that changes how this behaves.
  */
+/** Grace period after a non-fatal hit, so one collision costs one point. */
+const HIT_INVULNERABLE = 1.1;
+
 export class Player {
   constructor(craftId = DEFAULT_CRAFT) {
     this.setCraft(craftId);
@@ -26,6 +29,9 @@ export class Player {
     this.x = x;
     this.y = y;
     this.angle = 0;
+    this.maxHp = this.craft.hp;
+    this.hp = this.craft.hp;
+    this.hitFlash = 0;
     this.fireTimer = 0;
     this.sinceFired = 99;
     this.trailTimer = 0;
@@ -34,6 +40,24 @@ export class Player {
     this.pod = this.craft.pod
       ? { x, y, angle: 0, fireTimer: 0.6 }
       : null;
+  }
+
+  /**
+   * Takes one point of damage. Returns what happened so the caller can decide
+   * how loud to be about it: 'ignored' while the shield is up, 'damaged' for a
+   * hit the craft flies away from, 'destroyed' when the armour is gone.
+   */
+  takeHit() {
+    if (!this.alive || this.invulnerable > 0) return 'ignored';
+    this.hp -= 1;
+    this.hitFlash = 0.25;
+    if (this.hp > 0) {
+      this.invulnerable = HIT_INVULNERABLE;
+      return 'damaged';
+    }
+    this.hp = 0;
+    this.alive = false;
+    return 'destroyed';
   }
 
   /** Craft with a glide bonus turn tighter while they hold their fire. */
@@ -57,6 +81,7 @@ export class Player {
     this.fireTimer -= dt;
     this.sinceFired += dt;
     if (this.invulnerable > 0) this.invulnerable -= dt;
+    if (this.hitFlash > 0) this.hitFlash -= dt;
 
     const shotsAlive = game.bullets.reduce((n, b) => (b.team === 'player' ? n + 1 : n), 0);
     if (input.isHeld('fire') && this.fireTimer <= 0 && shotsAlive < craft.maxShots) {
@@ -127,6 +152,16 @@ export class Player {
     ctx.rotate(wrapAngle(this.angle));
     ctx.scale(1.3, 1.3);
     drawPlayer(ctx, { id: this.craft.id, colors: this.craft.colors, thrust: true, time });
+    if (this.hitFlash > 0) {
+      ctx.globalAlpha = Math.min(0.75, this.hitFlash * 3);
+      ctx.globalCompositeOperation = 'lighter';
+      drawPlayer(ctx, {
+        id: this.craft.id,
+        colors: { body: '#ff6b6b', wing: '#ff6b6b', wingAlt: '#ff6b6b', glass: '#ff6b6b', accent: '#ff6b6b' },
+        thrust: false,
+        time,
+      });
+    }
     ctx.restore();
 
     if (this.invulnerable > 0) {
