@@ -1,7 +1,9 @@
 import { clamp } from '../core/math.js';
 import { drawPlayer } from '../render/sprites.js';
 import { UI_DIM, UI_INK, UI_PANEL } from '../render/ui.js';
-import { drawSelect } from './selectscreen.js';
+import { MODULES } from './gear.js';
+import { drawLoadout } from './loadout.js';
+import { drawModeSelect, drawSelect } from './selectscreen.js';
 
 const INK = UI_INK;
 const DIM = UI_DIM;
@@ -99,6 +101,25 @@ function offScreenMarkers(ctx, game, cam) {
   ctx.globalAlpha = 1;
 }
 
+/** Modules fitted during this run, stacked counts shown as xN. */
+function moduleChips(ctx, game, x, y) {
+  if (!game.modules.length) return;
+  const counts = new Map();
+  for (const id of game.modules) counts.set(id, (counts.get(id) ?? 0) + 1);
+  let left = x;
+  for (const [id, count] of counts) {
+    const module = MODULES[id];
+    const text = count > 1 ? `${module.name} x${count}` : module.name;
+    const width = text.length * 7 + 12;
+    ctx.globalAlpha = 0.35;
+    ctx.fillStyle = UI_PANEL;
+    ctx.fillRect(left, y - 11, width, 16);
+    ctx.globalAlpha = 1;
+    label(ctx, text, left + 6, y, { size: 11, color: module.color });
+    left += width + 5;
+  }
+}
+
 /** Armour remaining on the current craft, as one pip per point. */
 function armourGauge(ctx, game, x, y) {
   const player = game.player;
@@ -135,8 +156,16 @@ export function drawHud(ctx, game, cam) {
   const h = cam.height;
   const era = game.era;
 
+  if (game.state === 'mode') {
+    drawModeSelect(ctx, game, cam);
+    return;
+  }
   if (game.state === 'select') {
     drawSelect(ctx, game, cam);
+    return;
+  }
+  if (game.state === 'loadout') {
+    drawLoadout(ctx, game, cam);
     return;
   }
 
@@ -148,6 +177,7 @@ export function drawHud(ctx, game, cam) {
     { size: 15, color: DIM, align: 'right' });
 
   armourGauge(ctx, game, 18, h - 30);
+  moduleChips(ctx, game, 16, 58);
 
   // Spare craft, drawn with the actual player sprite.
   for (let i = 0; i < Math.min(game.lives, 6); i += 1) {
@@ -226,6 +256,14 @@ export function drawHud(ctx, game, cam) {
     // Shrink with the view so the banner never runs under the pause button.
     label(ctx, game.banner, w / 2, 96, {
       size: Math.max(17, Math.min(30, w / 22)), color: '#ffd166', align: 'center',
+    });
+    ctx.globalAlpha = 1;
+  }
+
+  if (game.lootBanner && game.lootTimer > 0) {
+    ctx.globalAlpha = Math.min(1, game.lootTimer);
+    label(ctx, game.lootBanner, w / 2, 128, {
+      size: Math.max(13, Math.min(19, w / 40)), color: '#7cf5ff', align: 'center',
     });
     ctx.globalAlpha = 1;
   }

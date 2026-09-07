@@ -147,6 +147,11 @@ export function drawSelect(ctx, game, cam) {
   uiText(ctx, ready ? chosen.blurb : 'ロックされています。1周達成、または長押しで解放。',
     w / 2, layout.blurbY, Math.min(14, w / 46), ready ? UI_INK : UI_LOCKED);
 
+  if (game.sortie) {
+    uiText(ctx, game.touchMode ? '装備は LOADOUT ボタンから' : '↓ で LOADOUT',
+      w / 2, layout.blurbY + 20, Math.min(12, w / 54), '#7cf5ff');
+  }
+
   if (game.touchMode) {
     const s = layout.start;
     ctx.globalAlpha = ready ? 0.85 : 0.35;
@@ -169,4 +174,72 @@ export function drawSelect(ctx, game, cam) {
     uiText(ctx, 'S.WIND UNLOCKED', w / 2, h * 0.24, Math.min(24, w / 30), '#7cf5ff');
     ctx.globalAlpha = 1;
   }
+}
+
+/** Mode select: two cards, drawn and hit-tested from the same boxes. */
+export function modeLayout(width, height) {
+  const cardW = Math.min(width * 0.40, 300);
+  const cardH = Math.min(cardW * 0.72, height * 0.34);
+  const gap = Math.max(12, width * 0.03);
+  const left = (width - (cardW * 2 + gap)) / 2;
+  const top = height * 0.34;
+  return {
+    cards: [
+      { x: left, y: top, w: cardW, h: cardH },
+      { x: left + cardW + gap, y: top, w: cardW, h: cardH },
+    ],
+  };
+}
+
+export const MODES = [
+  {
+    id: 'arcade',
+    name: 'ARCADE',
+    blurb: '素の機体で挑む、調整済みのスコアアタック。',
+    detail: '装備もドロップもなし。バランスは固定されています。',
+  },
+  {
+    id: 'sortie',
+    name: 'SORTIE',
+    blurb: '拾って、強くなって、また潜る。',
+    detail: '空中でモジュールを拾い、旗艦からパーツを持ち帰ります。',
+  },
+];
+
+export function drawModeSelect(ctx, game, cam) {
+  const { width: w, height: h } = cam;
+  const layout = game.modeBoxes ?? modeLayout(w, h);
+
+  ctx.globalAlpha = 0.72;
+  ctx.fillStyle = UI_PANEL;
+  ctx.fillRect(0, 0, w, h);
+  ctx.globalAlpha = 1;
+
+  uiText(ctx, 'SELECT MODE', w / 2, h * 0.22, Math.min(34, w / 22), '#ffd166');
+
+  MODES.forEach((mode, i) => {
+    const box = layout.cards[i];
+    const selected = i === game.modeIndex;
+    ctx.globalAlpha = selected ? 0.85 : 0.5;
+    ctx.fillStyle = UI_PANEL;
+    roundedRect(ctx, box.x, box.y, box.w, box.h, 12);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = selected ? 3 : 1.5;
+    ctx.strokeStyle = selected ? '#ffd166' : '#2a4159';
+    ctx.stroke();
+
+    const cx = box.x + box.w / 2;
+    const scale = clamp(box.w / 280, 0.62, 1.1);
+    uiText(ctx, mode.name, cx, box.y + box.h * 0.34, Math.round(28 * scale), selected ? UI_INK : UI_DIM);
+    uiText(ctx, mode.blurb, cx, box.y + box.h * 0.58, Math.round(13 * scale), selected ? UI_INK : UI_DIM);
+    uiText(ctx, mode.detail, cx, box.y + box.h * 0.78, Math.round(11 * scale), UI_DIM);
+  });
+
+  const owned = game.locker.length;
+  if (game.modeIndex === 1 && owned > 0) {
+    uiText(ctx, `保管庫: ${owned} パーツ`, w / 2, layout.cards[0].y + layout.cards[0].h + 34, 13, '#7cf5ff');
+  }
+  uiText(ctx, game.touchMode ? 'モードをタップして決定' : '←  →  で選択 ・ ENTER で決定',
+    w / 2, layout.cards[0].y + layout.cards[0].h + 62, 14, UI_DIM);
 }

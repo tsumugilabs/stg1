@@ -9,6 +9,7 @@ const BINDINGS = {
   Enter: 'start', NumpadEnter: 'start',
   KeyP: 'pause', Escape: 'pause',
   KeyM: 'mute',
+  KeyX: 'discard', Backspace: 'discard',
 };
 
 const SWALLOWED = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space']);
