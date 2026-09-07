@@ -121,6 +121,18 @@ function moduleChips(ctx, game, x, y) {
   }
 }
 
+/** The air-brake reserve, sitting just under the armour pips. */
+function brakeGauge(ctx, game, x, y) {
+  const player = game.player;
+  const width = 15 * 5 + 3 * 4;
+  const empty = player.brakeCharge <= 0;
+  label(ctx, 'BRAKE', x, y - 7, { size: 9, color: DIM });
+  ctx.fillStyle = '#22344a';
+  ctx.fillRect(x, y, width, 5);
+  ctx.fillStyle = player.braking ? '#ffffff' : (empty ? '#ff8f8f' : '#7cf5ff');
+  ctx.fillRect(x, y, width * clamp(player.brakeCharge, 0, 1), 5);
+}
+
 /** Armour remaining on the current craft, as one pip per point. */
 function armourGauge(ctx, game, x, y) {
   const player = game.player;
@@ -177,7 +189,8 @@ export function drawHud(ctx, game, cam) {
   label(ctx, w < 760 ? era.label : `${era.label}  ${era.subtitle}`, w - 16, 27,
     { size: 15, color: DIM, align: 'right' });
 
-  armourGauge(ctx, game, 18, h - 30);
+  armourGauge(ctx, game, 18, h - 46);
+  brakeGauge(ctx, game, 18, h - 18);
   moduleChips(ctx, game, 16, 58);
 
   if (game.player.craft.stealth) {
@@ -189,13 +202,13 @@ export function drawHud(ctx, game, cam) {
   // Spare craft, drawn with the actual player sprite.
   for (let i = 0; i < Math.min(game.lives, 6); i += 1) {
     ctx.save();
-    ctx.translate(26 + i * 30, h - 62);
+    ctx.translate(26 + i * 30, h - 76);
     ctx.scale(0.62, 0.62);
     ctx.rotate(-Math.PI / 2);
     drawPlayer(ctx, { id: game.craft.id, colors: game.craft.colors, thrust: false });
     ctx.restore();
   }
-  if (game.lives > 6) label(ctx, `x${game.lives}`, 26 + 6 * 30, h - 56, { size: 15, color: DIM });
+  if (game.lives > 6) label(ctx, `x${game.lives}`, 26 + 6 * 30, h - 70, { size: 15, color: DIM });
 
   if (game.boss) {
     const bw = 260;

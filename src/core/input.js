@@ -10,6 +10,7 @@ const BINDINGS = {
   KeyP: 'pause', Escape: 'pause',
   KeyM: 'mute',
   KeyX: 'discard', Backspace: 'discard',
+  ShiftLeft: 'brake', ShiftRight: 'brake', KeyC: 'brake',
 };
 
 const SWALLOWED = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space']);
@@ -65,6 +66,7 @@ export class Input {
 
   isHeld(action) {
     if (action === 'fire' && this.touch && this.touch.firing) return true;
+    if (action === 'brake' && this.touch && this.touch.braking) return true;
     return this.held.has(action);
   }
 

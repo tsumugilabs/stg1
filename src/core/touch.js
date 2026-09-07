@@ -25,6 +25,9 @@ function layout(w, h) {
     stickTravel: button * 1.28,
     knobRadius: button * 0.44,
     fire: { x: w - inset, y: h - inset, r: button },
+    // Inboard of the fire button, so the same thumb can reach both and the
+    // stick hand is left alone.
+    brake: { x: w - inset - button * 2.5, y: h - inset, r: button * 0.82 },
     auto: { x: w - inset, y: h - inset - button - 42, w: 124, h: 38 },
     pause: { x: w - 48, y: 78, r: 27 },
   };
@@ -49,6 +52,7 @@ export class TouchControls {
     this.autoFire = true;
     this.stick = null;
     this.firePointer = null;
+    this.brakePointer = null;
     this.pauseTapped = false;
     this.tapped = false;
     this.canvas = null;
@@ -118,6 +122,10 @@ export class TouchControls {
       this.firePointer = event.pointerId;
       return;
     }
+    if (inCircle(point, ui.brake)) {
+      this.brakePointer = event.pointerId;
+      return;
+    }
     this.stick = { id: event.pointerId, ox: point.x, oy: point.y, x: point.x, y: point.y };
   }
 
@@ -138,6 +146,7 @@ export class TouchControls {
     this.holdPoint = null;
     if (this.stick && this.stick.id === event.pointerId) this.stick = null;
     if (this.firePointer === event.pointerId) this.firePointer = null;
+    if (this.brakePointer === event.pointerId) this.brakePointer = null;
   }
 
   /** Steering vector from the stick, or null while it is inside the dead zone. */
@@ -152,6 +161,10 @@ export class TouchControls {
 
   get firing() {
     return this.enabled && (this.autoFire || this.firePointer !== null);
+  }
+
+  get braking() {
+    return this.enabled && this.brakePointer !== null;
   }
 
   endFrame() {
@@ -229,6 +242,21 @@ export class TouchControls {
     ctx.stroke();
     ctx.globalAlpha = 1;
     centeredText(ctx, 'FIRE', f.x, f.y, Math.round(f.r * 0.34), pressed ? '#1a0f06' : UI_INK);
+
+    // Air brake.
+    const b = ui.brake;
+    const braking = this.brakePointer !== null;
+    ctx.globalAlpha = braking ? 0.8 : 0.4;
+    ctx.fillStyle = braking ? '#7cf5ff' : UI_PANEL;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 0.9;
+    ctx.strokeStyle = braking ? '#ffffff' : UI_DIM;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    centeredText(ctx, 'BRAKE', b.x, b.y, Math.round(b.r * 0.36), braking ? '#062430' : UI_INK);
 
     // Auto-fire toggle.
     const a = ui.auto;
