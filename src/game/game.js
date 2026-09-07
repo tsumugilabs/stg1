@@ -16,6 +16,7 @@ import { CRAFT, craftIndexById, DEFAULT_CRAFT } from './craft.js';
 import {
   MODULES, makePart, partScore, resolveCraft, rollModule, SLOTS, WEAPONS,
 } from './gear.js';
+import { drawDownedPilot } from '../render/sprites.js';
 import { ModulePickup } from './pickup.js';
 import { Wingman } from './wingman.js';
 import { beamEnd, distanceToSegment, drawBeam, Flare } from './weapons.js';
@@ -41,6 +42,10 @@ const CHEAT = [
 const CHEAT_HOLD_SECONDS = 3;
 const EXTRA_LIFE_EVERY = 30000;
 const RESCUE_BONUS = [500, 1000, 2000, 4000, 8000];
+/** Pulling a squadron mate out of the sky. Flat: the craft back is the prize. */
+const PILOT_RESCUE = 1000;
+/** How close a mate has to fly to catch a parachute. */
+const CHUTE_REACH = 34;
 
 function readHighScore() {
   try {
@@ -939,6 +944,13 @@ export class Game {
         player.update(dt, wingman ? wingman.control(dt, this) : this.input, this);
         continue;
       }
+      if (player.chute) {
+        // Wingmen just drift; only a person flies their own parachute.
+        player.updateChute(dt, player.local ? this.input : null);
+        if (player.chute.timer > 0) continue;
+        this.losePilot(player);
+        continue;
+      }
       player.downTimer -= dt;
       if (player.downTimer > 0) continue;
       player.lives -= 1;
@@ -963,13 +975,49 @@ export class Game {
     const y = mate ? mate.y - Math.sin(mate.angle) * 90 : player.y;
     player.reset(x, y);
     if (player.local) this.rescueChain = 0;
-    // Clear the ground around the returning craft only, so one player coming
-    // back does not wipe the sky for everybody.
+    this.clearAround(x, y);
+  }
+
+  /**
+   * Clear the ground around one returning craft only, so a player coming back
+   * does not wipe the sky for everybody else in the flight.
+   */
+  clearAround(x, y) {
     this.bullets = this.bullets.filter(
       (b) => b.team !== 'enemy' || distance(b.x, b.y, x, y) > 220,
     );
     this.enemies = this.enemies.filter((e) => distance(e.x, e.y, x, y) > 260);
     this.spawnTimer = Math.max(this.spawnTimer, 1.4);
+  }
+
+  /**
+   * A mate flew into the parachute. The pilot goes straight back up in a fresh
+   * craft and it costs nothing — the only way in the game to lose a craft and
+   * not lose a craft. That asymmetry is the whole point of flying together.
+   */
+  rescuePilot(pilot, rescuer) {
+    pilot.chute = null;
+    const x = rescuer.x - Math.cos(rescuer.angle) * 70;
+    const y = rescuer.y - Math.sin(rescuer.angle) * 70;
+    pilot.reset(x, y);
+    this.clearAround(x, y);
+    this.addScore(PILOT_RESCUE);
+    this.effects.popup(x, y - 26, `${pilot.name} RESCUED`, '#7cf5ff');
+    this.effects.ring(x, y, { radius: 96, life: 0.6, color: '#7cf5ff', width: 4 });
+    this.sfx.rescue();
+  }
+
+  /** Nobody reached them. Now it costs a craft, the way it always used to. */
+  losePilot(player) {
+    player.chute = null;
+    this.effects.ring(player.x, player.y, { radius: 74, life: 0.5, color: '#5d7085' });
+    if (player.local) this.rescueChain = 0;
+    player.lives -= 1;
+    if (player.lives <= 0) {
+      player.out = true;
+      return;
+    }
+    this.returnToTheAir(player);
   }
 
   updateWorld(dt) {
@@ -1163,11 +1211,15 @@ export class Game {
     this.effects.ring(player.x, player.y, { radius: 150, life: 0.7, color: '#7cf5ff', width: 5 });
     this.sfx.bigExplosion();
     if (player.local) this.shake = 0.9;
-    if (!player.alive) return;
-    // Called directly (debug, tests): take the craft down properly.
-    player.hp = 0;
-    player.alive = false;
-    player.downTimer = 1.9;
+    if (player.alive) {
+      // Called directly (debug, tests): take the craft down properly.
+      player.hp = 0;
+      player.alive = false;
+      player.downTimer = 1.9;
+    }
+    // In a flight the pilot outlives the craft. Alone there is nobody to come
+    // and get them, so a solo run keeps the plain timer.
+    if (this.squadron && !player.out) player.bailOut();
   }
 
   resolveCollisions() {
@@ -1215,6 +1267,12 @@ export class Game {
         if (!player.flying) continue;
       }
 
+      for (const mate of this.players) {
+        if (mate === player || !mate.downed) continue;
+        if (distance(mate.x, mate.y, player.x, player.y) > player.radius + CHUTE_REACH) continue;
+        this.rescuePilot(mate, player);
+      }
+
       for (const pickup of this.pickups) {
         if (pickup.dead || !circlesOverlap(pickup, player)) continue;
         pickup.dead = true;
@@ -1258,6 +1316,16 @@ export class Game {
     for (const player of this.players) {
       if (player.local || !player.flying) continue;
       player.draw(ctx, this.cam, this.time);
+    }
+    for (const player of this.players) {
+      if (!player.downed) continue;
+      const sx = player.x - this.cam.x + this.cam.width / 2;
+      const sy = player.y - this.cam.y + this.cam.height / 2;
+      ctx.save();
+      ctx.translate(sx, sy);
+      drawDownedPilot(ctx, this.time, player.craft.colors,
+        Math.max(0, player.chute.timer) / player.chute.window);
+      ctx.restore();
     }
     this.player.drawLock(ctx, this.cam, this, this.time);
     if (this.player.flying) this.player.draw(ctx, this.cam, this.time);

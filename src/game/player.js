@@ -23,6 +23,15 @@ const HIT_INVULNERABLE = 1.1;
 const BRAKE_DRAIN = 0.5;
 const BRAKE_REFILL = 0.42;
 const BRAKE_MIN = 0.18;
+
+/**
+ * How long a pilot hangs under the silk before the sky claims them. Long
+ * enough to cross most of a screen to reach someone, short enough that the
+ * flight has to break off and go and get them.
+ */
+const RESCUE_WINDOW = 12;
+/** A drifting pilot steers weakly — enough to meet a rescuer halfway. */
+const CHUTE_STEER = 46;
 /** However the multipliers stack, a craft never turns faster than this. */
 const TURN_CEILING = 8;
 
@@ -37,6 +46,7 @@ export class Player {
     this.lives = 0;
     this.downTimer = 0;
     this.out = false;
+    this.chute = null;
     this.setCraft(craftId);
     this.reset(0, 0);
   }
@@ -80,6 +90,7 @@ export class Player {
     this.brakeCharge = 1;
     this.braking = false;
     this.downTimer = 0;
+    this.chute = null;
     this.fireTimer = 0;
     this.sinceFired = 99;
     this.trailTimer = 0;
@@ -135,6 +146,45 @@ export class Player {
   /** In the air right now: not destroyed, and not out of craft altogether. */
   get flying() {
     return this.alive && !this.out;
+  }
+
+  /**
+   * The craft is gone; the pilot is not. They hang under a parachute where
+   * they went down and only a mate flying into them puts them back up. It is
+   * the one thing in this game nobody can do for themselves.
+   */
+  bailOut() {
+    this.chute = {
+      timer: RESCUE_WINDOW,
+      window: RESCUE_WINDOW,
+      phase: Math.random() * Math.PI * 2,
+      drift: (Math.random() - 0.5) * 20,
+      fall: 20 + Math.random() * 10,
+    };
+    this.downTimer = RESCUE_WINDOW;
+  }
+
+  /** Hanging under the silk, waiting for someone. */
+  get downed() {
+    return !this.alive && !this.out && this.chute !== null;
+  }
+
+  /**
+   * Drifts the pilot. The seat still steers, weakly, so a downed player has
+   * something to do with their hands and can close half the gap themselves
+   * instead of watching someone else fly.
+   */
+  updateChute(dt, input) {
+    const chute = this.chute;
+    if (!chute) return;
+    chute.phase += dt;
+    chute.timer -= dt;
+    this.downTimer = chute.timer;
+    const dir = input && input.direction ? input.direction() : null;
+    const steerX = dir ? dir.x * CHUTE_STEER : 0;
+    const steerY = dir ? dir.y * CHUTE_STEER : 0;
+    this.x += (chute.drift + Math.sin(chute.phase * 1.5) * 10 + steerX) * dt;
+    this.y += (chute.fall + steerY) * dt;
   }
 
   /** Throttle setting right now: full, or back on the brake. */
