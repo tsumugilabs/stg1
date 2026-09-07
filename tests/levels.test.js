@@ -6,8 +6,8 @@ import {
 import { slowestCraft, widestTurningCraft } from '../src/game/craft.js';
 
 const RISING = [
-  'enemySpeed', 'enemyTurn', 'bulletSpeed', 'quota', 'bossHp',
-  'maxEnemies', 'bossSpeed', 'bossTurn', 'squadronChance', 'bossShots',
+  'enemySpeed', 'enemyTurn', 'bulletSpeed', 'quota', 'bossHp', 'maxEnemies',
+  'bossSpeed', 'bossTurn', 'squadronChance', 'bossShots', 'bulletRange', 'bossRange',
 ];
 const EASING = ['fireInterval', 'spawnInterval', 'bossFire'];
 
@@ -76,6 +76,45 @@ test('the opening era is an introduction, not a fight', () => {
   assert.ok(first.fireInterval[0] >= 3, 'the first escorts should rarely shoot');
   assert.equal(first.squadronChance, 0, 'the first era should never spawn a pair at once');
   assert.equal(first.bossShots, 1, 'the first flagship should not fire a spread');
+});
+
+test('the opening eras fire barely past their own noses', () => {
+  // Stages one and two are flown on a phone by people who have just picked the
+  // game up: an escort should only be able to hit you if you fly into it.
+  const enemySize = 30;
+  for (const era of ERAS.slice(0, 2)) {
+    assert.ok(era.bulletRange <= enemySize * 2.5,
+      `${era.label} escorts shoot ${era.bulletRange}px, further than point blank`);
+  }
+  for (const era of ERAS.slice(2)) {
+    assert.ok(era.bulletRange > enemySize * 4, `${era.label} escorts should have real reach`);
+  }
+  // A flagship is the threat in every era, including the gentle ones.
+  for (const era of ERAS) {
+    assert.ok(era.bossRange > era.bulletRange, `${era.label} flagship out-ranges its escorts`);
+  }
+});
+
+test('the run is ordered by year, and every stage is a distinct era', () => {
+  const years = ERAS.map((era) => Number(era.label));
+  for (let i = 1; i < years.length; i += 1) {
+    assert.ok(years[i] > years[i - 1],
+      `${ERAS[i].label} comes after ${ERAS[i - 1].label} but is not later`);
+  }
+  assert.equal(new Set(ERAS.map((e) => e.enemy)).size, ERAS.length, 'each era needs its own escort');
+  assert.equal(new Set(ERAS.map((e) => e.boss)).size, ERAS.length, 'each era needs its own flagship');
+  assert.equal(new Set(ERAS.map((e) => e.scenery)).size, ERAS.length, 'each era needs its own sky');
+});
+
+test('the propeller eras come before the jet eras', () => {
+  // A stealth flagship in the 1970s was the bug that prompted the reorder;
+  // this keeps the themes and the years honest about each other.
+  const byEnemy = Object.fromEntries(ERAS.map((era, i) => [era.enemy, i]));
+  assert.ok(byEnemy.biplane < byEnemy.fighter, 'biplanes precede monoplane fighters');
+  assert.ok(byEnemy.fighter < byEnemy.helicopter, 'piston fighters precede gunships');
+  assert.ok(byEnemy.helicopter < byEnemy.fsw, 'gunships precede forward-swept jets');
+  const stealth = ERAS.findIndex((era) => era.boss === 'stealth');
+  assert.ok(Number(ERAS[stealth].label) >= 1990, 'a stealth flagship needs a plausible year');
 });
 
 test('eraAt wraps and cycleAt counts completed laps', () => {

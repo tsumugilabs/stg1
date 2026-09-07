@@ -155,23 +155,120 @@ export function drawPod(ctx, colors, time) {
   ctx.fill();
 }
 
-function drawBiplane(ctx, colors) {
-  polygon(ctx, [[-1, -16], [5, -16], [5, 16], [-1, 16]], colors.wing);
-  polygon(ctx, [[4, -12], [9, -12], [9, 12], [4, 12]], colors.wingAlt);
-  polygon(ctx, [[14, 0], [4, 5], [-11, 4], [-13, 0], [-11, -4], [4, -5]], colors.body);
-  polygon(ctx, [[-13, -6], [-9, -6], [-9, 6], [-13, 6]], colors.wing);
+/**
+ * A turning propeller disc. This is the one cue that reads as "piston engine"
+ * at gameplay size, so the early eras lean on it hard: a translucent disc, a
+ * bright arc chasing round it, and two blades caught mid-rotation.
+ */
+function drawPropeller(ctx, x, radius, time, speed = 30) {
+  const spin = time * speed;
+  ctx.save();
+  ctx.translate(x, 0);
+  // The disc: faint, and no wider than the wings, or it reads as a balloon.
+  ctx.globalAlpha = 0.13;
+  ctx.fillStyle = '#f2f6ff';
   ctx.beginPath();
-  ctx.arc(2, 0, 2.4, 0, Math.PI * 2);
-  ctx.fillStyle = colors.glass;
+  ctx.arc(0, 0, radius, 0, Math.PI * 2);
   ctx.fill();
+  // Three blades from the hub outwards. Spokes, not diameters: drawing a
+  // diameter twice puts both blades on the same line and the disc looks still.
+  ctx.globalAlpha = 0.8;
+  ctx.strokeStyle = '#eef4ff';
+  ctx.lineWidth = 1.6;
+  ctx.lineCap = 'round';
+  for (let i = 0; i < 3; i += 1) {
+    const a = spin + (i * Math.PI * 2) / 3;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(Math.cos(a) * radius, Math.sin(a) * radius);
+    ctx.stroke();
+  }
+  ctx.lineCap = 'butt';
+  ctx.globalAlpha = 0.45;
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.arc(0, 0, radius * 0.86, spin, spin + 1.1);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.restore();
 }
 
-function drawFighter(ctx, colors) {
-  polygon(ctx, [[2, -15], [8, -4], [8, 4], [2, 15], [-3, 13], [-1, 0], [-3, -13]], colors.wing);
-  polygon(ctx, [[15, 0], [5, 4.5], [-12, 4], [-14, 0], [-12, -4], [5, -4.5]], colors.body);
-  polygon(ctx, [[-11, -8], [-7, -7], [-7, 7], [-11, 8]], colors.wingAlt);
+/** Struts between the stacked wings of a biplane. */
+function drawStruts(ctx, colors, xTop, xBottom, spans) {
+  ctx.strokeStyle = colors.wingAlt;
+  ctx.lineWidth = 1.2;
+  for (const y of spans) {
+    for (const sign of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(xTop, sign * y);
+      ctx.lineTo(xBottom, sign * y);
+      ctx.stroke();
+    }
+  }
+}
+
+function drawBiplane(ctx, colors, time) {
+  // Two stacked wings with struts between them, then a radial cowling and a
+  // turning disc: the whole silhouette should say "1910" before it says "enemy".
+  polygon(ctx, [[-4, -18], [2, -18], [2, 18], [-4, 18]], colors.wing);
+  drawStruts(ctx, colors, 7, -1, [9, 15]);
+  polygon(ctx, [[4, -15], [10, -15], [10, 15], [4, 15]], colors.wingAlt);
+  polygon(ctx, [[12, 0], [4, 4.5], [-11, 4], [-13, 0], [-11, -4], [4, -4.5]], colors.body);
+  polygon(ctx, [[-13, -8], [-9, -7], [-9, 7], [-13, 8]], colors.wing);
+  polygon(ctx, [[-9, 0], [-14, -3], [-14, 3]], colors.wingAlt);
   ctx.beginPath();
-  ctx.arc(4, 0, 2.6, 0, Math.PI * 2);
+  ctx.arc(-1, 0, 2.2, 0, Math.PI * 2);
+  ctx.fillStyle = colors.glass;
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(11, 0, 3.4, 0, Math.PI * 2);
+  ctx.fillStyle = colors.wingAlt;
+  ctx.fill();
+  drawPropeller(ctx, 13, 8, time, 26);
+}
+
+function drawFighter(ctx, colors, time) {
+  // A 1940s monoplane: one elliptical wing, a deep radial cowling, big prop.
+  polygon(ctx, [
+    [2, -17], [6, -14], [7, -6], [7, 6], [6, 14], [2, 17],
+    [-4, 14], [-3, 6], [-3, -6], [-4, -14],
+  ], colors.wing);
+  polygon(ctx, [[13, 0], [6, 4.5], [-12, 4], [-15, 0], [-12, -4], [6, -4.5]], colors.body);
+  polygon(ctx, [[-12, -8], [-8, -7], [-8, 7], [-12, 8]], colors.wingAlt);
+  polygon(ctx, [[-8, 0], [-15, -3.5], [-15, 3.5]], colors.wingAlt);
+  ctx.beginPath();
+  ctx.arc(-1, 0, 2.6, 0, Math.PI * 2);
+  ctx.fillStyle = colors.glass;
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(10, 0, 4.4, 0, Math.PI * 2);
+  ctx.fillStyle = colors.wingAlt;
+  ctx.fill();
+  drawPropeller(ctx, 13.5, 9, time, 34);
+}
+
+/**
+ * Forward-swept wing. The tips sit well ahead of the roots and that is the
+ * entire silhouette, so the wings are the biggest, brightest thing on the
+ * aircraft and everything else stays small enough not to argue with them.
+ */
+function drawForwardSwept(ctx, colors) {
+  for (const sign of [-1, 1]) {
+    polygon(ctx, [
+      [-3, sign * 3], [13, sign * 19], [5, sign * 20], [-13, sign * 4],
+    ], colors.wing);
+  }
+  // Tiny canards, kept close in so they do not read as swept-back wings.
+  for (const sign of [-1, 1]) {
+    polygon(ctx, [[15, sign * 3], [11, sign * 8], [9, sign * 7], [12, sign * 2.5]], colors.wingAlt);
+  }
+  for (const sign of [-1, 1]) {
+    polygon(ctx, [[-11, sign * 4], [-17, sign * 10], [-19, sign * 8], [-15, sign * 3]], colors.wingAlt);
+  }
+  polygon(ctx, [[19, 0], [9, 3.6], [-15, 4], [-17, 0], [-15, -4], [9, -3.6]], colors.body);
+  polygon(ctx, [[-15, -2.6], [-21, 0], [-15, 2.6]], '#ff9a3c');
+  ctx.beginPath();
+  ctx.arc(8, 0, 2.6, 0, Math.PI * 2);
   ctx.fillStyle = colors.glass;
   ctx.fill();
 }
@@ -230,8 +327,9 @@ function drawUfo(ctx, colors, time) {
 
 export function drawEnemy(ctx, kind, colors, time = 0) {
   switch (kind) {
-    case 'biplane': drawBiplane(ctx, colors); break;
-    case 'fighter': drawFighter(ctx, colors); break;
+    case 'biplane': drawBiplane(ctx, colors, time); break;
+    case 'fighter': drawFighter(ctx, colors, time); break;
+    case 'fsw': drawForwardSwept(ctx, colors); break;
     case 'jet': drawJet(ctx, colors); break;
     case 'helicopter': drawHelicopter(ctx, colors, time); break;
     default: drawUfo(ctx, colors, time); break;

@@ -274,9 +274,10 @@ export class Game {
     return best;
   }
 
-  fireEnemyBullet(x, y, angle, speed) {
+  /** `reach` is how far the shot travels before it burns out, in pixels. */
+  fireEnemyBullet(x, y, angle, speed, reach) {
     this.bullets.push(new Bullet({
-      x, y, angle, speed, life: 2.4, team: 'enemy', color: '#ff8c5a', radius: 3.2,
+      x, y, angle, speed, life: reach / speed, team: 'enemy', color: '#ff8c5a', radius: 3.2,
     }));
     this.sfx.enemyShot();
   }
