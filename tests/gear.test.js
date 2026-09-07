@@ -3,12 +3,13 @@ import test from 'node:test';
 import { CRAFT, craftById } from '../src/game/craft.js';
 import {
   AFFIXES, fanBarrels, makePart, MODULES, MODULE_IDS, partScore,
-  RARITIES, rarityIndex, resolveCraft, rollModule, SLOTS,
+  RARITIES, rarityIndex, resolveCraft, rollModule, SLOTS, WEAPONS,
 } from '../src/game/gear.js';
 
 const NUMERIC = [
   'speed', 'turnRate', 'fireCooldown', 'maxShots', 'bulletSpeed', 'bulletLife',
   'damage', 'pierce', 'radius', 'hp', 'lives', 'respawnShield', 'killBlast',
+  'podCount', 'missile', 'flare', 'laser', 'swarm',
 ];
 
 test('an unequipped craft is exactly the airframe, so ARCADE cannot drift', () => {
@@ -58,6 +59,8 @@ test('no pile of equipment can push a craft past its caps', () => {
   for (const id of MODULE_IDS) {
     for (let i = 0; i < MODULES[id].max; i += 1) modules.push(id);
   }
+  // Everything at once, including the exclusives: caps must hold regardless
+  // of how the pile was assembled.
   for (const base of CRAFT) {
     for (let attempt = 0; attempt < 60; attempt += 1) {
       const parts = SLOTS.map((slot) => makePart({ slot: slot.id, rarity: RARITIES[3] }));
@@ -69,6 +72,9 @@ test('no pile of equipment can push a craft past its caps', () => {
       assert.ok(c.hp <= 14, `hp ${c.hp}`);
       assert.ok(c.barrels.length <= 5, `barrels ${c.barrels.length}`);
       assert.ok(c.damage <= 5 && c.pierce <= 4, 'damage or pierce ran away');
+      assert.ok(c.podCount <= 6, `bits ran away: ${c.podCount}`);
+      assert.ok(c.missile <= 3 && c.flare <= 3 && c.laser <= 3 && c.swarm <= 2,
+        'a weapon level ran past its cap');
       assert.ok(c.bulletLife <= 2.2 && c.bulletLife >= 0.3, `life ${c.bulletLife}`);
     }
   }
@@ -107,10 +113,52 @@ test('modules stop dropping once they are all maxed out', () => {
   for (const id of MODULE_IDS) {
     for (let i = 0; i < MODULES[id].max; i += 1) held.push(id);
   }
-  assert.equal(rollModule(held), null);
+  assert.equal(rollModule(held, 'swind'), null);
   // With one slot free, that is the only thing that can come up.
   const nearly = held.filter((id, i) => !(id === 'pod' && held.indexOf('pod') === i));
-  assert.equal(rollModule(nearly), 'pod');
+  assert.equal(rollModule(nearly, 'swind'), 'pod');
+});
+
+test('craft-locked modules only drop for the craft they belong to', () => {
+  const locked = MODULE_IDS.filter((id) => MODULES[id].only);
+  assert.ok(locked.length >= 1, 'nothing is exclusive any more');
+  for (const id of locked) {
+    assert.equal(MODULES[id].only, 'swind', `${id} is locked to an unexpected craft`);
+  }
+  // A thousand rolls on an ordinary craft must never turn one up.
+  for (let i = 0; i < 1000; i += 1) {
+    const rolled = rollModule([], 'viper');
+    assert.ok(!locked.includes(rolled), `${rolled} dropped for a Viper`);
+  }
+  // And they must be reachable for the craft that owns them.
+  const seen = new Set();
+  for (let i = 0; i < 4000; i += 1) seen.add(rollModule([], 'swind'));
+  for (const id of locked) assert.ok(seen.has(id), `${id} never drops even for S.Wind`);
+});
+
+test('every weapon level is a sane, monotonic step up', () => {
+  for (const [name, spec] of Object.entries(WEAPONS)) {
+    let previous = null;
+    for (let level = 1; level <= 3; level += 1) {
+      const now = spec(level);
+      assert.ok(now.interval > 0.15, `${name} Lv${level} fires absurdly fast`);
+      if (previous) {
+        assert.ok(now.interval < previous.interval,
+          `${name} Lv${level} is no faster than Lv${level - 1}`);
+      }
+      previous = now;
+    }
+  }
+});
+
+test('the range ladder is a ladder, not a nudge', () => {
+  const base = CRAFT[0];
+  const one = resolveCraft(base, [], ['reach']);
+  const three = resolveCraft(base, [], ['reach', 'reach', 'reach']);
+  const rangeOf = (c) => c.bulletSpeed * c.bulletLife;
+  assert.ok(MODULES.reach.max >= 5, 'the ladder needs rungs to climb');
+  assert.ok(rangeOf(one) > rangeOf(base) * 1.2, 'one rung should be felt');
+  assert.ok(rangeOf(three) > rangeOf(one) * 1.4, 'stacking should keep paying');
 });
 
 test('every module declares a limit and a description', () => {
