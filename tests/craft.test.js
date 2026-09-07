@@ -6,7 +6,7 @@ const FIELDS = [
   'id', 'name', 'motif', 'tagline', 'blurb', 'speed', 'turnRate', 'fireCooldown',
   'maxShots', 'bulletSpeed', 'bulletLife', 'bulletRadius', 'bulletColor', 'barrels',
   'damage', 'pierce', 'radius', 'hp', 'lives', 'respawnShield', 'colors', 'hidden',
-  'stealth',
+  'stealth', 'brake',
 ];
 
 // Everything a pilot could care about, expressed so that higher is better.
@@ -22,6 +22,9 @@ const MERITS = {
   smallHitbox: (c) => -c.radius,
   shield: (c) => c.respawnShield,
   pierce: (c) => c.pierce,
+  // How much tighter the air brake makes a corner: the deceleration and the
+  // turn bonus together.
+  brakeBite: (c) => (1 / c.brake.speed) * c.brake.turn,
 };
 
 const SELECTABLE = CRAFT.filter((craft) => !craft.hidden);
@@ -120,6 +123,34 @@ test('stealth is a real trade, not a free pass', () => {
     assert.ok(craft.maxShots <= 4, `${craft.name} should not also carry a full magazine`);
     assert.ok(craft.fireCooldown >= 0.25, `${craft.name} should not also fire quickly`);
   }
+});
+
+test('the air brake tightens the corner without ever stopping the craft', () => {
+  // Turning radius is speed over turn rate, so the deceleration alone is most
+  // of the effect; the turn bonus is the rest. Both must point the same way.
+  for (const craft of CRAFT) {
+    const brake = craft.brake;
+    assert.ok(brake, `${craft.name} has no air brake`);
+    assert.ok(brake.speed > 0.3 && brake.speed < 0.8,
+      `${craft.name} brake factor ${brake.speed} is a stop or a shrug`);
+    assert.ok(brake.turn >= 1, `${craft.name} turns worse on the brake`);
+    const open = craft.speed / craft.turnRate;
+    const braked = (craft.speed * brake.speed) / (craft.turnRate * brake.turn);
+    assert.ok(braked < open * 0.8,
+      `${craft.name} barely corners any tighter: ${open.toFixed(1)} -> ${braked.toFixed(1)}`);
+    // The craft never stops. That constraint is the whole game.
+    assert.ok(craft.speed * brake.speed > 55,
+      `${craft.name} nearly comes to a halt at ${(craft.speed * brake.speed).toFixed(0)}`);
+  }
+});
+
+test('the nimble craft has the best brake and the heavy one the worst', () => {
+  const bite = (c) => (1 / c.brake.speed) * c.brake.turn;
+  const selectable = CRAFT.filter((c) => !c.hidden);
+  const best = selectable.reduce((x, y) => (bite(y) > bite(x) ? y : x));
+  const worst = selectable.reduce((x, y) => (bite(y) < bite(x) ? y : x));
+  assert.equal(best.id, 'dragon', 'the agility craft should brake hardest');
+  assert.equal(worst.id, 'eagle', 'the heavy craft should brake worst');
 });
 
 test('the slowest craft can still be flown', () => {

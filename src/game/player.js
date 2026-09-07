@@ -13,6 +13,19 @@ import { WEAPONS } from './gear.js';
 /** Grace period after a non-fatal hit, so one collision costs one point. */
 const HIT_INVULNERABLE = 1.1;
 
+/**
+ * The air brake is a resource, not a mode. Held down it drains in a couple of
+ * seconds and takes about as long to come back, so it buys one hard corner at
+ * a time rather than becoming the way you always fly. Once it empties it has
+ * to recover past BRAKE_MIN before it will bite again, which stops it
+ * stuttering on and off at the bottom of the gauge.
+ */
+const BRAKE_DRAIN = 0.5;
+const BRAKE_REFILL = 0.42;
+const BRAKE_MIN = 0.18;
+/** However the multipliers stack, a craft never turns faster than this. */
+const TURN_CEILING = 8;
+
 export class Player {
   constructor(craftId = DEFAULT_CRAFT) {
     this.pods = [];
@@ -56,6 +69,8 @@ export class Player {
     this.maxHp = this.craft.hp;
     this.hp = this.craft.hp;
     this.hitFlash = 0;
+    this.brakeCharge = 1;
+    this.braking = false;
     this.fireTimer = 0;
     this.sinceFired = 99;
     this.trailTimer = 0;
@@ -69,6 +84,24 @@ export class Player {
     this.laserActive = 0;
     this.laserTick = 0;
     this.swarmTimer = this.craft.swarm ? WEAPONS.swarm(this.craft.swarm).interval : 0;
+  }
+
+  updateBrake(dt, input) {
+    if (input.isHeld('brake')) {
+      const enough = this.braking ? this.brakeCharge > 0 : this.brakeCharge >= BRAKE_MIN;
+      if (enough) {
+        this.braking = true;
+        this.brakeCharge = Math.max(0, this.brakeCharge - BRAKE_DRAIN * dt);
+        if (this.brakeCharge === 0) this.braking = false;
+        return;
+      }
+      // Held but spent. It stays spent: recharging under the player's thumb
+      // would make the brake stutter on and off instead of running out.
+      this.braking = false;
+      return;
+    }
+    this.braking = false;
+    this.brakeCharge = Math.min(1, this.brakeCharge + BRAKE_REFILL * dt);
   }
 
   /**
@@ -89,6 +122,11 @@ export class Player {
     return 'destroyed';
   }
 
+  /** Throttle setting right now: full, or back on the brake. */
+  get speed() {
+    return this.craft.speed * (this.braking ? this.craft.brake.speed : 1);
+  }
+
   /**
    * True while a stealth craft is holding its fire. Escorts cannot find it;
    * firing gives the position away again for the craft's reveal window.
@@ -101,20 +139,23 @@ export class Player {
   /** Craft with a glide bonus turn tighter while they hold their fire. */
   get turnRate() {
     const glide = this.craft.glideTurn;
-    if (glide && this.sinceFired >= glide.after) return glide.turnRate;
-    return this.craft.turnRate;
+    const base = glide && this.sinceFired >= glide.after ? glide.turnRate : this.craft.turnRate;
+    const braked = base * (this.braking ? this.craft.brake.turn : 1);
+    return Math.min(braked, TURN_CEILING);
   }
 
   update(dt, input, game) {
     if (!this.alive) return;
     const craft = this.craft;
 
+    this.updateBrake(dt, input);
+
     const dir = input.direction();
     if (dir) {
       this.angle = turnToward(this.angle, Math.atan2(dir.y, dir.x), this.turnRate * dt);
     }
-    this.x += Math.cos(this.angle) * craft.speed * dt;
-    this.y += Math.sin(this.angle) * craft.speed * dt;
+    this.x += Math.cos(this.angle) * this.speed * dt;
+    this.y += Math.sin(this.angle) * this.speed * dt;
 
     this.fireTimer -= dt;
     this.sinceFired += dt;
@@ -252,6 +293,21 @@ export class Player {
     ctx.scale(1.3, 1.3);
     // Faded while unseen, so the state is legible without reading the HUD.
     if (this.hidden) ctx.globalAlpha = 0.5;
+    if (this.braking) {
+      // Boards out: two slabs of drag either side of the tail.
+      ctx.fillStyle = this.craft.colors.accent;
+      ctx.globalAlpha *= 0.75;
+      for (const sign of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(-10, sign * 5);
+        ctx.lineTo(-17, sign * 13);
+        ctx.lineTo(-21, sign * 10);
+        ctx.lineTo(-14, sign * 3);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.globalAlpha = this.hidden ? 0.5 : 1;
+    }
     drawPlayer(ctx, { id: this.craft.id, colors: this.craft.colors, thrust: true, time });
     if (this.hitFlash > 0) {
       ctx.globalAlpha = Math.min(0.75, this.hitFlash * 3);

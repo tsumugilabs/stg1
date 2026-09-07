@@ -38,6 +38,10 @@ export const CRAFT = [
     respawnShield: 3.4,
     glideTurn: null,
     killBlast: 0,
+    // Air brake: how far the throttle comes back, and how much tighter it
+    // turns while it is out. Turning radius is speed over turn rate, so the
+    // deceleration alone is most of the effect.
+    brake: { speed: 0.45, turn: 1.20 },
     podCount: 0,
     missile: 0,
     flare: 0,
@@ -74,6 +78,10 @@ export const CRAFT = [
     // turning become a choice rather than something you do at once.
     glideTurn: { after: 0.4, turnRate: 5.4 },
     killBlast: 0,
+    // Air brake: how far the throttle comes back, and how much tighter it
+    // turns while it is out. Turning radius is speed over turn rate, so the
+    // deceleration alone is most of the effect.
+    brake: { speed: 0.36, turn: 1.35 },
     podCount: 0,
     missile: 0,
     flare: 0,
@@ -113,6 +121,10 @@ export const CRAFT = [
     respawnShield: 2.4,
     glideTurn: null,
     killBlast: 36,
+    // Air brake: how far the throttle comes back, and how much tighter it
+    // turns while it is out. Turning radius is speed over turn rate, so the
+    // deceleration alone is most of the effect.
+    brake: { speed: 0.62, turn: 1.08 },
     podCount: 0,
     missile: 0,
     flare: 0,
@@ -149,6 +161,10 @@ export const CRAFT = [
     respawnShield: 2.4,
     glideTurn: null,
     killBlast: 0,
+    // Air brake: how far the throttle comes back, and how much tighter it
+    // turns while it is out. Turning radius is speed over turn rate, so the
+    // deceleration alone is most of the effect.
+    brake: { speed: 0.42, turn: 1.28 },
     podCount: 0,
     missile: 0,
     flare: 0,
@@ -187,6 +203,10 @@ export const CRAFT = [
     respawnShield: 3.0,
     glideTurn: null,
     killBlast: 0,
+    // Air brake: how far the throttle comes back, and how much tighter it
+    // turns while it is out. Turning radius is speed over turn rate, so the
+    // deceleration alone is most of the effect.
+    brake: { speed: 0.40, turn: 1.30 },
     podCount: 1,
     missile: 0,
     flare: 0,
