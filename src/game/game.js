@@ -14,9 +14,10 @@ import {
 } from './debug.js';
 import { CRAFT, craftIndexById, DEFAULT_CRAFT } from './craft.js';
 import {
-  MODULES, makePart, partScore, resolveCraft, rollModule, SLOTS,
+  MODULES, makePart, partScore, resolveCraft, rollModule, SLOTS, WEAPONS,
 } from './gear.js';
 import { ModulePickup } from './pickup.js';
+import { beamEnd, distanceToSegment, drawBeam, Flare } from './weapons.js';
 import { cycleAt, difficultyAt, eraAt, ERAS } from './levels.js';
 
 const HIGH_SCORE_KEY = 'chronopilot.highscore';
@@ -102,6 +103,7 @@ export class Game {
     this.bullets = [];
     this.parachutists = [];
     this.pickups = [];
+    this.flares = [];
     this.boss = null;
 
     this.cam = { x: 0, y: 0, width: canvas.width, height: canvas.height, era: eraAt(0) };
@@ -228,6 +230,7 @@ export class Game {
     this.bullets.length = 0;
     this.parachutists.length = 0;
     this.pickups.length = 0;
+    this.flares.length = 0;
     this.boss = null;
     this.effects.clear();
     this.spawnTimer = randRange(...era.spawnInterval);
@@ -338,6 +341,85 @@ export class Game {
       damage: craft.damage,
       pierce: 0,
     }));
+  }
+
+  /** Every escort currently inside the view, plus the flagship if it is. */
+  onScreenTargets() {
+    const margin = 40;
+    const visible = (thing) => {
+      const sx = thing.x - this.cam.x + this.cam.width / 2;
+      const sy = thing.y - this.cam.y + this.cam.height / 2;
+      return sx > -margin && sx < this.cam.width + margin
+        && sy > -margin && sy < this.cam.height + margin;
+    };
+    const found = this.enemies.filter((e) => !e.dead && visible(e));
+    if (this.boss && visible(this.boss)) found.push(this.boss);
+    return found;
+  }
+
+  spawnMissile(x, y, angle, target, spec, color) {
+    this.bullets.push(new Bullet({
+      x, y, angle,
+      speed: spec.speed,
+      life: spec.life,
+      team: 'player',
+      color,
+      radius: 3.4,
+      damage: spec.damage,
+      pierce: 0,
+      homing: { turnRate: spec.turnRate, target },
+    }));
+  }
+
+  /** Missiles leave the rails fanned out and then find their own marks. */
+  fireMissiles(player, spec) {
+    const target = this.nearestTarget(player.x, player.y, 900);
+    for (let i = 0; i < spec.salvo; i += 1) {
+      const offset = (i - (spec.salvo - 1) / 2) * 0.5;
+      this.spawnMissile(
+        player.x - Math.sin(player.angle) * (i % 2 ? 10 : -10),
+        player.y + Math.cos(player.angle) * (i % 2 ? 10 : -10),
+        player.angle + offset, target, spec, '#ff9f43',
+      );
+    }
+    this.sfx.playerShot();
+  }
+
+  /** One missile for every target in view, each on its own mark. */
+  fireSwarm(player, spec) {
+    const targets = this.onScreenTargets().slice(0, spec.maxTargets);
+    if (!targets.length) return;
+    targets.forEach((target, i) => {
+      const offset = (i / targets.length) * Math.PI * 2;
+      this.spawnMissile(player.x, player.y, player.angle + Math.sin(offset) * 1.2,
+        target, spec, '#c58bf0');
+    });
+    this.effects.ring(player.x, player.y, { radius: 120, color: '#c58bf0', life: 0.4 });
+    this.sfx.playerShot();
+  }
+
+  dropFlare(player, spec) {
+    this.flares.push(new Flare(
+      player.x - Math.cos(player.angle) * 18,
+      player.y - Math.sin(player.angle) * 18,
+      spec,
+    ));
+  }
+
+  /** One damage tick of the beam along its whole length. */
+  burnWithBeam(player, spec) {
+    const end = beamEnd(player, this.cam);
+    const hits = (thing) => distanceToSegment(
+      thing.x, thing.y, player.x, player.y, end.x, end.y,
+    ) < spec.width + thing.radius;
+
+    for (const enemy of this.enemies) {
+      if (!enemy.dead && hits(enemy)) this.killEnemy(enemy);
+    }
+    if (this.boss && hits(this.boss)) {
+      this.effects.burst(this.boss.x, this.boss.y, { count: 4, speed: 80, life: 0.25, size: 2 });
+      if (this.boss.hit(spec.damage)) this.killBoss(this.boss);
+    }
   }
 
   /** Closest escort, or the flagship, within `range` of a point. */
@@ -558,7 +640,7 @@ export class Game {
         break;
       }
       case 'module': {
-        const id = rollModule(this.modules);
+        const id = rollModule(this.modules, this.baseCraft.id);
         if (id) {
           this.modules.push(id);
           this.rebuildCraft({ inFlight: true });
@@ -780,16 +862,35 @@ export class Game {
       if (this.boss.dead) this.boss = null;
     }
 
-    for (const bullet of this.bullets) bullet.update(dt);
+    for (const bullet of this.bullets) bullet.update(dt, this);
     this.bullets = this.bullets.filter(
       (b) => !b.dead && distance(b.x, b.y, this.player.x, this.player.y) < 1200,
     );
+
+    for (const flare of this.flares) flare.update(dt);
+    this.flares = this.flares.filter((f) => !f.dead);
+    if (this.flares.length) this.burnIncoming();
 
     for (const chute of this.parachutists) chute.update(dt);
     this.parachutists = this.parachutists.filter((p) => !p.dead);
 
     for (const pickup of this.pickups) pickup.update(dt);
     this.pickups = this.pickups.filter((p) => !p.dead);
+  }
+
+  /** Enemy rounds that stray into a burning flare do not come out again. */
+  burnIncoming() {
+    for (const bullet of this.bullets) {
+      if (bullet.dead || bullet.team !== 'enemy') continue;
+      for (const flare of this.flares) {
+        if (distance(bullet.x, bullet.y, flare.x, flare.y) > flare.radius) continue;
+        bullet.dead = true;
+        this.effects.burst(bullet.x, bullet.y, {
+          count: 4, speed: 70, life: 0.25, size: 2, colors: ['#ffe066', '#fff6c9'],
+        });
+        break;
+      }
+    }
   }
 
   updateSpawning(dt) {
@@ -840,7 +941,7 @@ export class Game {
   /** Shakes a module loose, unless every module is already at its limit. */
   dropModule(x, y) {
     if (this.pickups.length >= 4) return;
-    const id = rollModule(this.modules);
+    const id = rollModule(this.modules, this.baseCraft.id);
     if (!id) return;
     this.pickups.push(new ModulePickup(x, y, id));
   }
@@ -1018,6 +1119,7 @@ export class Game {
 
     for (const chute of this.parachutists) chute.draw(ctx, this.cam);
     for (const pickup of this.pickups) pickup.draw(ctx, this.cam);
+    for (const flare of this.flares) flare.draw(ctx, this.cam);
     for (const bullet of this.bullets) {
       if (bullet.team === 'enemy') bullet.draw(ctx, this.cam);
     }
@@ -1027,6 +1129,13 @@ export class Game {
     this.player.draw(ctx, this.cam, this.time);
     for (const bullet of this.bullets) {
       if (bullet.team === 'player') bullet.draw(ctx, this.cam);
+    }
+    if (this.player.laserActive > 0 && this.player.alive) {
+      const spec = WEAPONS.laser(this.craft.laser);
+      drawBeam(ctx, this.player, this.cam, {
+        width: spec.width,
+        strength: Math.min(1, this.player.laserActive / Math.max(spec.duration, 1e-6) + 0.35),
+      });
     }
     this.effects.draw(ctx, this.cam);
 

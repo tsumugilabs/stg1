@@ -64,6 +64,10 @@ export const AFFIXES = {
     apply: (s, v) => { s.damage += v; } },
   barrel: { label: 'BARREL', range: [1, 1], integer: true, minRarity: 3, format: (v) => `+${v}`,
     apply: (s, v) => { s.barrels = fanBarrels(s.barrels.length + v); } },
+  missile: { label: 'MISSILE', range: [1, 1], integer: true, minRarity: 2, format: (v) => `Lv${v}`,
+    apply: (s, v) => { s.missile += v; } },
+  flare: { label: 'FLARE', range: [1, 1], integer: true, minRarity: 2, format: (v) => `Lv${v}`,
+    apply: (s, v) => { s.flare += v; } },
 };
 
 export const SLOTS = [
@@ -71,7 +75,7 @@ export const SLOTS = [
   { id: 'wing', name: 'WING', pool: ['turn', 'hitbox', 'speed'] },
   { id: 'gun', name: 'GUN', pool: ['rate', 'damage', 'barrel', 'shots'] },
   { id: 'armor', name: 'ARMOR', pool: ['hp', 'shield', 'hitbox'] },
-  { id: 'avionics', name: 'AVIONICS', pool: ['reach', 'pierce', 'blast', 'shots'] },
+  { id: 'avionics', name: 'AVIONICS', pool: ['reach', 'pierce', 'blast', 'shots', 'missile', 'flare'] },
 ];
 
 export function slotById(id) {
@@ -158,6 +162,12 @@ const CAPS = {
   killBlast: [0, 90],
   respawnShield: [1.5, 6],
   bulletLife: [0.3, 2.2],
+  bulletSpeed: [120, 900],
+  podCount: [0, 6],
+  missile: [0, 3],
+  flare: [0, 3],
+  laser: [0, 3],
+  swarm: [0, 2],
 };
 
 function clampStats(stats) {
@@ -199,17 +209,72 @@ export const MODULES = {
   plate: { name: 'PLATE', blurb: '装甲 +1', max: 4, color: '#9fe8a0', apply: (s) => { s.hp += 1; } },
   agile: { name: 'AGILE', blurb: '旋回 +0.4', max: 4, color: '#c58bf0', apply: (s) => { s.turnRate += 0.4; } },
   thrust: { name: 'THRUST', blurb: '速度 +10', max: 4, color: '#f2f6ff', apply: (s) => { s.speed += 10; } },
-  reach: { name: 'REACH', blurb: '射程 +18%', max: 3, color: '#a0c8ff', apply: (s) => { s.bulletLife *= 1.18; } },
+  // Stacks into a real ladder rather than a single nudge: each tier buys
+  // both time of flight and muzzle velocity, so shots reach further without
+  // simply hanging in the air longer.
+  reach: {
+    name: 'REACH',
+    blurb: '射程 +22% / 弾速 +6%',
+    max: 5,
+    color: '#a0c8ff',
+    apply: (s) => { s.bulletLife *= 1.22; s.bulletSpeed *= 1.06; },
+  },
   blast: { name: 'BLAST', blurb: '撃墜時に爆風', max: 3, color: '#ffb066', apply: (s) => { s.killBlast += 22; } },
-  pod: { name: 'POD', blurb: '随伴ポッド', max: 1, color: '#b9f2ff', apply: (s) => { s.pod = true; } },
+  pod: { name: 'POD', blurb: '随伴ポッド', max: 1, color: '#b9f2ff', apply: (s) => { s.podCount = Math.max(s.podCount, 1); } },
+  missile: { name: 'MISSILE', blurb: '誘導ミサイル', max: 3, color: '#ff9f43', apply: (s) => { s.missile += 1; } },
+  flare: { name: 'FLARE', blurb: '敵弾を焼くフレア', max: 3, color: '#ffe066', apply: (s) => { s.flare += 1; } },
+  // S.Wind only. These are the reward craft's reward.
+  bit: { name: 'BIT', blurb: 'ビット +1 (最大6)', max: 5, color: '#7cf5ff', only: 'swind', apply: (s) => { s.podCount += 1; } },
+  laser: { name: 'LASER', blurb: '画面端まで届くレーザー', max: 3, color: '#ff6bd6', only: 'swind', apply: (s) => { s.laser += 1; } },
+  swarm: { name: 'SWARM', blurb: '画面内の敵全部へ同時ミサイル', max: 2, color: '#c58bf0', only: 'swind', apply: (s) => { s.swarm += 1; } },
+};
+
+/**
+ * How each weapon behaves at a given level. Kept as one table so the numbers
+ * are in one place and the entities stay dumb.
+ */
+export const WEAPONS = {
+  missile: (level) => ({
+    interval: 1.7 / (1 + 0.45 * (level - 1)),
+    salvo: 1 + Math.floor((level - 1) / 2),
+    speed: 300,
+    turnRate: 3.4,
+    life: 2.6,
+    damage: 1,
+  }),
+  flare: (level) => ({
+    interval: 3.2 / (1 + 0.5 * (level - 1)),
+    radius: 62 + 14 * (level - 1),
+    life: 2.2,
+  }),
+  laser: (level) => ({
+    interval: 2.8 / (1 + 0.4 * (level - 1)),
+    duration: 0.35 + 0.08 * (level - 1),
+    tick: 0.12,
+    damage: 1,
+    width: 7 + 2 * (level - 1),
+  }),
+  swarm: (level) => ({
+    interval: 3.4 / (1 + 0.4 * (level - 1)),
+    maxTargets: 10,
+    speed: 330,
+    turnRate: 4.6,
+    life: 2.8,
+    damage: 1,
+  }),
 };
 
 export const MODULE_IDS = Object.keys(MODULES);
 
-/** A module the player can still stack, or null when everything is maxed. */
-export function rollModule(held) {
-  const room = MODULE_IDS.filter(
-    (id) => held.filter((h) => h === id).length < MODULES[id].max,
-  );
+/**
+ * A module this craft can still stack, or null when there is no room left.
+ * Modules marked `only` never drop for anything else.
+ */
+export function rollModule(held, craftId) {
+  const room = MODULE_IDS.filter((id) => {
+    const module = MODULES[id];
+    if (module.only && module.only !== craftId) return false;
+    return held.filter((h) => h === id).length < module.max;
+  });
   return room.length ? pick(room) : null;
 }

@@ -29,6 +29,7 @@ const MODULES = [
   'src/game/craft.js',
   'src/game/gear.js',
   'src/game/pickup.js',
+  'src/game/weapons.js',
   'src/game/levels.js',
   'src/game/background.js',
   'src/game/bullet.js',

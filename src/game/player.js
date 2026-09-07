@@ -1,6 +1,7 @@
 import { turnToward, wrapAngle } from '../core/math.js';
 import { drawPlayer, drawPod } from '../render/sprites.js';
 import { craftById, DEFAULT_CRAFT } from './craft.js';
+import { WEAPONS } from './gear.js';
 
 /**
  * The player's craft. It always sits at the centre of the screen — the world
@@ -14,6 +15,7 @@ const HIT_INVULNERABLE = 1.1;
 
 export class Player {
   constructor(craftId = DEFAULT_CRAFT) {
+    this.pods = [];
     this.setCraft(craftId);
     this.reset(0, 0);
   }
@@ -32,11 +34,19 @@ export class Player {
    */
   applyCraft(craft) {
     const gained = Math.max(0, craft.hp - this.maxHp);
-    this.setCraft(craft);
+    this.setCraft(craft);   // also brings the bit count into line
     this.maxHp = craft.hp;
     this.hp = Math.min(this.maxHp, this.hp + gained);
-    if (craft.pod && !this.pod) this.pod = { x: this.x, y: this.y, angle: this.angle, fireTimer: 0.6 };
-    if (!craft.pod) this.pod = null;
+    this.syncPods();
+  }
+
+  /** Keeps the escort bits in step with however many the craft now carries. */
+  syncPods() {
+    const wanted = this.craft.podCount;
+    while (this.pods.length > wanted) this.pods.pop();
+    while (this.pods.length < wanted) {
+      this.pods.push({ x: this.x, y: this.y, angle: this.angle, fireTimer: 0.3 + this.pods.length * 0.12 });
+    }
   }
 
   reset(x, y) {
@@ -51,9 +61,14 @@ export class Player {
     this.trailTimer = 0;
     this.invulnerable = this.craft.respawnShield;
     this.alive = true;
-    this.pod = this.craft.pod
-      ? { x, y, angle: 0, fireTimer: 0.6 }
-      : null;
+    this.pods = [];
+    this.syncPods();
+    this.missileTimer = this.craft.missile ? WEAPONS.missile(this.craft.missile).interval : 0;
+    this.flareTimer = this.craft.flare ? WEAPONS.flare(this.craft.flare).interval : 0;
+    this.laserTimer = this.craft.laser ? WEAPONS.laser(this.craft.laser).interval : 0;
+    this.laserActive = 0;
+    this.laserTick = 0;
+    this.swarmTimer = this.craft.swarm ? WEAPONS.swarm(this.craft.swarm).interval : 0;
   }
 
   /**
@@ -125,17 +140,78 @@ export class Player {
       }
     }
 
-    if (this.pod) this.updatePod(dt, game);
+    this.updateWeapons(dt, game);
+    for (let i = 0; i < this.pods.length; i += 1) this.updatePod(dt, game, this.pods[i], i);
+  }
+
+  /**
+   * Everything that fires on its own clock rather than on the trigger:
+   * missiles, flares, the beam and the swarm.
+   */
+  updateWeapons(dt, game) {
+    const craft = this.craft;
+
+    if (craft.missile > 0) {
+      const spec = WEAPONS.missile(craft.missile);
+      this.missileTimer -= dt;
+      if (this.missileTimer <= 0) {
+        this.missileTimer = spec.interval;
+        game.fireMissiles(this, spec);
+      }
+    }
+
+    if (craft.flare > 0) {
+      const spec = WEAPONS.flare(craft.flare);
+      this.flareTimer -= dt;
+      if (this.flareTimer <= 0) {
+        this.flareTimer = spec.interval;
+        game.dropFlare(this, spec);
+      }
+    }
+
+    if (craft.laser > 0) {
+      const spec = WEAPONS.laser(craft.laser);
+      if (this.laserActive > 0) {
+        this.laserActive -= dt;
+        this.laserTick -= dt;
+        if (this.laserTick <= 0) {
+          this.laserTick = spec.tick;
+          game.burnWithBeam(this, spec);
+        }
+      } else {
+        this.laserTimer -= dt;
+        if (this.laserTimer <= 0) {
+          this.laserTimer = spec.interval;
+          this.laserActive = spec.duration;
+          this.laserTick = 0;
+          game.sfx.playerShot();
+        }
+      }
+    }
+
+    if (craft.swarm > 0) {
+      const spec = WEAPONS.swarm(craft.swarm);
+      this.swarmTimer -= dt;
+      if (this.swarmTimer <= 0) {
+        this.swarmTimer = spec.interval;
+        game.fireSwarm(this, spec);
+      }
+    }
   }
 
   /**
    * The maneuver pod trails the craft and shoots for itself, picking whatever
    * is closest rather than following the player's aim.
    */
-  updatePod(dt, game) {
-    const pod = this.pod;
-    const anchorX = this.x - Math.cos(this.angle) * 26 - Math.sin(this.angle) * 22;
-    const anchorY = this.y - Math.sin(this.angle) * 26 + Math.cos(this.angle) * 22;
+  updatePod(dt, game, pod, index) {
+    // Bits sit in a fan behind the craft, alternating left and right so a full
+    // set of six still reads as a formation rather than a clump.
+    const side = index % 2 === 0 ? 1 : -1;
+    const rank = Math.floor(index / 2);
+    const back = 24 + rank * 15;
+    const out = (20 + rank * 13) * side;
+    const anchorX = this.x - Math.cos(this.angle) * back - Math.sin(this.angle) * out;
+    const anchorY = this.y - Math.sin(this.angle) * back + Math.cos(this.angle) * out;
     pod.x += (anchorX - pod.x) * Math.min(1, dt * 7);
     pod.y += (anchorY - pod.y) * Math.min(1, dt * 7);
 
@@ -161,10 +237,10 @@ export class Player {
     const sx = this.x - cam.x + cam.width / 2;
     const sy = this.y - cam.y + cam.height / 2;
 
-    if (this.pod) {
+    for (const pod of this.pods) {
       ctx.save();
-      ctx.translate(this.pod.x - cam.x + cam.width / 2, this.pod.y - cam.y + cam.height / 2);
-      ctx.rotate(this.pod.angle);
+      ctx.translate(pod.x - cam.x + cam.width / 2, pod.y - cam.y + cam.height / 2);
+      ctx.rotate(pod.angle);
       drawPod(ctx, this.craft.colors, time);
       ctx.restore();
     }
