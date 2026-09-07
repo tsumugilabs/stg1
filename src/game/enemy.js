@@ -17,6 +17,7 @@ export class Enemy {
     this.speed = era.enemySpeed * difficulty;
     this.turnRate = era.enemyTurn * difficulty;
     this.fireTimer = randRange(...era.fireInterval);
+    this.rangeScale = difficulty;
     this.wobblePhase = randRange(0, Math.PI * 2);
     this.wobbleRate = randRange(1.2, 2.4);
     this.score = 300;
@@ -37,11 +38,13 @@ export class Enemy {
     this.fireTimer -= dt;
     const range = distance(this.x, this.y, player.x, player.y);
     const aimed = Math.abs(angleDiff(this.angle, toPlayer)) < 0.4;
-    // The near limit matters: a shot fired from on top of the player is one
-    // they had no chance to read.
-    if (this.fireTimer <= 0 && aimed && range > 140 && range < 520 && player.alive) {
+    // Escorts only fire inside the reach of their own guns, which in the
+    // opening eras is barely longer than the aircraft itself.
+    const reach = this.era.bulletRange * this.rangeScale;
+    if (this.fireTimer <= 0 && aimed && player.alive
+        && range < reach * 1.05 && range > reach * 0.15) {
       this.fireTimer = randRange(...this.era.fireInterval);
-      game.fireEnemyBullet(this.x, this.y, this.angle, this.era.bulletSpeed);
+      game.fireEnemyBullet(this.x, this.y, this.angle, this.era.bulletSpeed, reach);
     }
 
     // Anything that wanders far outside the play area is recycled.

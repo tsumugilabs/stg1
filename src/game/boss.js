@@ -18,6 +18,9 @@ export class Boss {
     this.maxHp = Math.round(era.bossHp * difficulty);
     this.hp = this.maxHp;
     this.fireTimer = era.bossFire[1];
+    // A flagship's guns reach far further than an escort's, so the opening
+    // eras still have something that can shoot back.
+    this.range = era.bossRange * Math.min(difficulty, 1.5);
     this.escortTimer = era.bossEscorts ? era.bossEscorts[0] : Infinity;
     this.hitFlash = 0;
     this.score = 5000;
@@ -42,12 +45,12 @@ export class Boss {
 
     this.fireTimer -= dt;
     const range = distance(this.x, this.y, player.x, player.y);
-    if (this.fireTimer <= 0 && player.alive && range < 700) {
+    if (this.fireTimer <= 0 && player.alive && range < this.range * 1.05) {
       this.fireTimer = randRange(...this.era.bossFire);
       const aim = Math.abs(angleDiff(this.angle, toPlayer)) < 1.0 ? this.angle : toPlayer;
       const offsets = this.era.bossShots > 1 ? [-0.22, 0, 0.22] : [0];
       for (const offset of offsets) {
-        game.fireEnemyBullet(this.x, this.y, aim + offset, this.era.bulletSpeed * 0.95);
+        game.fireEnemyBullet(this.x, this.y, aim + offset, this.era.bulletSpeed * 0.95, this.range);
       }
     }
 

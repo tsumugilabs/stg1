@@ -3,6 +3,8 @@ import { Input } from './core/input.js';
 import { startLoop } from './core/loop.js';
 import { TouchControls } from './core/touch.js';
 import { Game } from './game/game.js';
+import { drawEnemy } from './render/sprites.js';
+import { ERAS } from './game/levels.js';
 
 const canvas = document.getElementById('screen');
 
@@ -45,9 +47,13 @@ function unlockAudio() {
 window.addEventListener('keydown', unlockAudio);
 window.addEventListener('pointerdown', unlockAudio);
 
-// Exposed so the browser console and the headless smoke test can poke at the
+// Exposed so the browser console and the headless checks can poke at the
 // running game (jump eras, summon the flagship) without extra plumbing.
+// drawEnemy and ERAS are here so escort artwork can be rendered to a plate at
+// whatever scale you like, which is how the sprites get reviewed.
 window.game = game;
+window.__drawEnemy = drawEnemy;
+window.__eras = ERAS;
 
 function handleResize() {
   fitCanvas();
