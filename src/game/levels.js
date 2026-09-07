@@ -1,0 +1,105 @@
+/**
+ * Eras the player travels through. Each one changes the sky, the scenery, the
+ * escort craft and the flagship that has to be shot down to jump forward.
+ */
+export const ERAS = [
+  {
+    label: '1910',
+    subtitle: 'THE GREAT WAR SKIES',
+    enemy: 'biplane',
+    boss: 'zeppelin',
+    bossName: 'ZEPPELIN',
+    scenery: 'clouds',
+    sky: ['#1d4f88', '#5ea3d8'],
+    colors: { body: '#e0cba0', wing: '#c0873f', wingAlt: '#8d5f2c', glass: '#2b2013', rotor: '#dce7f2' },
+    bossColors: { body: '#d9cdb4', wing: '#9c8a6a', wingAlt: '#6f6047', glass: '#f4d35e', rotor: '#dce7f2' },
+    enemySpeed: 96,
+    enemyTurn: 1.35,
+    bulletSpeed: 185,
+    fireInterval: [2.0, 3.6],
+    quota: 14,
+    bossHp: 20,
+    maxEnemies: 4,
+  },
+  {
+    label: '1940',
+    subtitle: 'FIGHTER SQUADRONS',
+    enemy: 'fighter',
+    boss: 'bomber',
+    bossName: 'HEAVY BOMBER',
+    scenery: 'stormclouds',
+    sky: ['#22384f', '#6b7f92'],
+    colors: { body: '#a7b6a0', wing: '#7e8f78', wingAlt: '#5d6b58', glass: '#2b3a2a', rotor: '#c9d3c4' },
+    bossColors: { body: '#8d9a86', wing: '#6f7d68', wingAlt: '#4f5c4a', glass: '#ffd166', rotor: '#c9d3c4' },
+    enemySpeed: 118,
+    enemyTurn: 1.6,
+    bulletSpeed: 210,
+    fireInterval: [1.7, 3.1],
+    quota: 17,
+    bossHp: 28,
+    maxEnemies: 5,
+  },
+  {
+    label: '1970',
+    subtitle: 'SUPERSONIC INTERCEPT',
+    enemy: 'jet',
+    boss: 'stealth',
+    bossName: 'STEALTH WING',
+    scenery: 'highclouds',
+    sky: ['#123049', '#3f7d9c'],
+    colors: { body: '#d3dde8', wing: '#5d7a97', wingAlt: '#3c536b', glass: '#12202e', rotor: '#d4e0ec' },
+    bossColors: { body: '#3d4a5c', wing: '#2a3543', wingAlt: '#8fa5bd', glass: '#7cf5ff', rotor: '#d4e0ec' },
+    enemySpeed: 142,
+    enemyTurn: 1.85,
+    bulletSpeed: 240,
+    fireInterval: [1.5, 2.7],
+    quota: 20,
+    bossHp: 36,
+    maxEnemies: 6,
+  },
+  {
+    label: '1982',
+    subtitle: 'GUNSHIP CITY',
+    enemy: 'helicopter',
+    boss: 'gunship',
+    bossName: 'ASSAULT GUNSHIP',
+    scenery: 'city',
+    sky: ['#1a2136', '#4a5a74'],
+    colors: { body: '#7a8b6f', wing: '#5c6a54', wingAlt: '#414d3c', glass: '#20301f', rotor: '#dfe7ee' },
+    bossColors: { body: '#5d6b54', wing: '#46523f', wingAlt: '#8fa07f', glass: '#ff8f5e', rotor: '#eef3f8' },
+    enemySpeed: 128,
+    enemyTurn: 2.2,
+    bulletSpeed: 235,
+    fireInterval: [1.3, 2.4],
+    quota: 23,
+    bossHp: 44,
+    maxEnemies: 6,
+  },
+  {
+    label: '2084',
+    subtitle: 'OUTER ORBIT',
+    enemy: 'ufo',
+    boss: 'mothership',
+    bossName: 'MOTHERSHIP',
+    scenery: 'stars',
+    sky: ['#080615', '#241a4d'],
+    colors: { body: '#8f7bd8', wing: '#c58bf0', wingAlt: '#7cf5ff', glass: '#f2e9ff', rotor: '#c58bf0' },
+    bossColors: { body: '#4b3c86', wing: '#c58bf0', wingAlt: '#7cf5ff', glass: '#1a1330', rotor: '#c58bf0' },
+    enemySpeed: 152,
+    enemyTurn: 2.5,
+    bulletSpeed: 265,
+    fireInterval: [1.1, 2.1],
+    quota: 26,
+    bossHp: 54,
+    maxEnemies: 7,
+  },
+];
+
+export function eraAt(index) {
+  return ERAS[index % ERAS.length];
+}
+
+/** How many full trips through history the player has completed. */
+export function cycleAt(index) {
+  return Math.floor(index / ERAS.length);
+}
