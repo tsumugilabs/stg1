@@ -1,6 +1,7 @@
 import { clamp } from '../core/math.js';
 import { drawPlayer } from '../render/sprites.js';
 import { UI_DIM, UI_INK, UI_PANEL } from '../render/ui.js';
+import { drawDebug, drawHitboxes } from './debug.js';
 import { MODULES } from './gear.js';
 import { drawLoadout } from './loadout.js';
 import { drawModeSelect, drawSelect } from './selectscreen.js';
@@ -179,6 +180,12 @@ export function drawHud(ctx, game, cam) {
   armourGauge(ctx, game, 18, h - 30);
   moduleChips(ctx, game, 16, 58);
 
+  if (game.player.craft.stealth) {
+    const unseen = game.player.hidden;
+    label(ctx, unseen ? 'STEALTH' : 'DETECTED', w - 16, h - 46,
+      { size: 13, color: unseen ? '#7cf5ff' : '#ff8f8f', align: 'right' });
+  }
+
   // Spare craft, drawn with the actual player sprite.
   for (let i = 0; i < Math.min(game.lives, 6); i += 1) {
     ctx.save();
@@ -216,6 +223,8 @@ export function drawHud(ctx, game, cam) {
 
   if (game.state === 'playing' || game.state === 'paused' || game.state === 'respawn') {
     offScreenMarkers(ctx, game, cam);
+    if (game.debugFlags.hitboxes) drawHitboxes(ctx, game, cam);
+    if (game.debug) drawDebug(ctx, game, cam);
   }
 
   switch (game.state) {

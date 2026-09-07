@@ -87,10 +87,29 @@ function drawSwind(ctx, colors, time) {
   ctx.fill();
 }
 
+/** F-22: diamond wings, twin canted tails, stabilators, two nozzles. */
+function drawRaptor(ctx, colors) {
+  for (const sign of [-1, 1]) {
+    polygon(ctx, [[7, sign * 4], [-3, sign * 20], [-13, sign * 20], [-11, sign * 5]], colors.wing);
+  }
+  for (const sign of [-1, 1]) {
+    polygon(ctx, [[-13, sign * 6], [-20, sign * 15], [-24, sign * 14], [-18, sign * 5]], colors.wingAlt);
+  }
+  for (const sign of [-1, 1]) {
+    polygon(ctx, [[-8, sign * 6], [-17, sign * 12], [-19, sign * 10], [-11, sign * 5]], colors.wingAlt);
+  }
+  polygon(ctx, [[21, 0], [13, 4], [8, 6], [-17, 6.5], [-19, 0], [-17, -6.5], [8, -6], [13, -4]], colors.body);
+  ctx.fillStyle = colors.wingAlt;
+  ctx.fillRect(-20, -6, 5, 4.5);
+  ctx.fillRect(-20, 1.5, 5, 4.5);
+  polygon(ctx, [[10, 0], [3, 3], [-1, 0], [3, -3]], colors.glass);
+}
+
 const CRAFT_SHAPES = {
   viper: drawViper,
   dragon: drawDragon,
   eagle: drawEagle,
+  raptor: drawRaptor,
   swind: drawSwind,
 };
 

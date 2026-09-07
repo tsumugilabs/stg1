@@ -9,6 +9,9 @@ import { Player } from './player.js';
 import { drawHud } from './hud.js';
 import { cardAt, inStart, MODES, modeLayout, selectLayout } from './selectscreen.js';
 import { loadoutLayout, ROWS_VISIBLE, rowAt } from './loadout.js';
+import {
+  DEBUG_ACTIONS, DEBUG_TAP_GAP, DEBUG_TAPS, debugButtonAt, debugLayout,
+} from './debug.js';
 import { CRAFT, craftIndexById, DEFAULT_CRAFT } from './craft.js';
 import {
   MODULES, makePart, partScore, resolveCraft, rollModule, SLOTS,
@@ -22,6 +25,7 @@ const MODE_KEY = 'chronopilot.mode';
 const LOCKER_KEY = 'chronopilot.locker';
 const LOADOUT_KEY = 'chronopilot.loadout';
 const LOCKER_LIMIT = 60;
+const DEBUG_KEY = 'chronopilot.debug';
 /** Chance an escort coughs up a module when it goes down, in SORTIE. */
 const MODULE_DROP_CHANCE = 0.07;
 const UNLOCK_KEY = 'chronopilot.unlocked';
@@ -125,6 +129,12 @@ export class Game {
     this.partIndex = 0;
     this.listOffset = 0;
     this.holdPart = 0;
+    this.debug = readStored(DEBUG_KEY, '') === '1';
+    this.debugFlags = { invincible: false, hitboxes: false };
+    this.debugTaps = 0;
+    this.debugTapAt = -99;
+    this.debugBoxes = null;
+    this.fps = 60;
     this.unlockFlash = 0;
     this.state = 'title';
     this.time = 0;
@@ -374,6 +384,7 @@ export class Game {
 
   update(dt) {
     this.time += dt;
+    this.fps = this.fps * 0.9 + (1 / Math.max(dt, 1e-6)) * 0.1;
     if (this.bannerTimer > 0) this.bannerTimer -= dt;
     if (this.lootTimer > 0) this.lootTimer -= dt;
     if (this.shake > 0) this.shake = Math.max(0, this.shake - dt * 2.6);
@@ -517,6 +528,78 @@ export class Game {
     this.listOffset = Math.max(0, this.listOffset);
   }
 
+  toggleDebug() {
+    this.debug = !this.debug;
+    if (!this.debug) this.debugFlags = { invincible: false, hitboxes: false };
+    writeStored(DEBUG_KEY, this.debug ? '1' : '');
+    this.showLoot(this.debug ? 'DEBUG MODE ON' : 'DEBUG MODE OFF');
+    this.sfx.extraLife();
+  }
+
+  /** Runs one debug action. Shared by the on-screen buttons and the number keys. */
+  runDebugAction(key) {
+    switch (key) {
+      case 'invincible':
+      case 'hitboxes':
+        this.debugFlags[key] = !this.debugFlags[key];
+        break;
+      case 'nextEra':
+        this.eraIndex += 1;
+        this.startEra();
+        break;
+      case 'flagship':
+        if (!this.boss) { this.kills = this.quota; this.spawnBoss(); }
+        break;
+      case 'part': {
+        const part = makePart({ depth: this.eraIndex });
+        this.locker.push(part);
+        writeJson(LOCKER_KEY, this.locker);
+        this.showLoot(`${part.name} を入手`);
+        break;
+      }
+      case 'module': {
+        const id = rollModule(this.modules);
+        if (id) {
+          this.modules.push(id);
+          this.rebuildCraft({ inFlight: true });
+          this.showLoot(`${MODULES[id].name} — ${MODULES[id].blurb}`);
+        }
+        break;
+      }
+      case 'unlock':
+        this.unlockHidden('DEBUG');
+        this.unlocked = true;
+        writeStored(UNLOCK_KEY, '1');
+        break;
+      case 'off':
+        this.toggleDebug();
+        break;
+      default:
+        break;
+    }
+  }
+
+  /** Debug buttons and the number keys that mirror them. */
+  updateDebugControls() {
+    if (!this.debug) return;
+    const layout = debugLayout(this.cam.width);
+    this.debugBoxes = layout;
+    const touch = this.input.touch;
+    if (touch && touch.tapPoint) {
+      const index = debugButtonAt(touch.tapPoint, layout);
+      if (index !== -1) {
+        this.runDebugAction(layout.buttons[index].action.key);
+        touch.tapPoint = null;
+      }
+    }
+    for (const code of this.input.recentCodes) {
+      const slot = Number(code.replace('Digit', ''));
+      if (code.startsWith('Digit') && slot >= 1 && slot <= DEBUG_ACTIONS.length) {
+        this.runDebugAction(DEBUG_ACTIONS[slot - 1].key);
+      }
+    }
+  }
+
   equipHighlighted() {
     const slot = SLOTS[this.slotIndex].id;
     const part = this.slotCandidates()[this.partIndex];
@@ -568,6 +651,18 @@ export class Game {
     const layout = selectLayout(this.cam.width, this.cam.height);
     this.selectBoxes = layout;
     let tappedStart = false;
+    if (touch && touch.tapPoint) {
+      const onCard = cardAt(touch.tapPoint, layout) !== -1;
+      if (!onCard && !inStart(touch.tapPoint, layout)) {
+        this.debugTaps = this.time - this.debugTapAt > DEBUG_TAP_GAP ? 1 : this.debugTaps + 1;
+        this.debugTapAt = this.time;
+        if (this.debugTaps >= DEBUG_TAPS) {
+          this.debugTaps = 0;
+          this.toggleDebug();
+        }
+      }
+    }
+
     if (touch && touch.tapPoint) {
       const card = cardAt(touch.tapPoint, layout);
       if (card !== -1 && card !== this.craftIndex) {
@@ -667,6 +762,7 @@ export class Game {
       this.state = 'paused';
       return;
     }
+    this.updateDebugControls();
 
     this.player.update(dt, this.input, this);
     this.updateWorld(dt);
@@ -823,6 +919,7 @@ export class Game {
    * which is what makes the game survivable with a thumb on a touch screen.
    */
   hitPlayer() {
+    if (this.debugFlags.invincible) return;
     const outcome = this.player.takeHit();
     if (outcome === 'ignored') return;
     if (outcome === 'damaged') {

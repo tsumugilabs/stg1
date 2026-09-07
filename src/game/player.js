@@ -74,6 +74,15 @@ export class Player {
     return 'destroyed';
   }
 
+  /**
+   * True while a stealth craft is holding its fire. Escorts cannot find it;
+   * firing gives the position away again for the craft's reveal window.
+   */
+  get hidden() {
+    const stealth = this.craft.stealth;
+    return Boolean(stealth) && this.alive && this.sinceFired >= stealth.reveal;
+  }
+
   /** Craft with a glide bonus turn tighter while they hold their fire. */
   get turnRate() {
     const glide = this.craft.glideTurn;
@@ -165,6 +174,8 @@ export class Player {
     ctx.translate(sx, sy);
     ctx.rotate(wrapAngle(this.angle));
     ctx.scale(1.3, 1.3);
+    // Faded while unseen, so the state is legible without reading the HUD.
+    if (this.hidden) ctx.globalAlpha = 0.5;
     drawPlayer(ctx, { id: this.craft.id, colors: this.craft.colors, thrust: true, time });
     if (this.hitFlash > 0) {
       ctx.globalAlpha = Math.min(0.75, this.hitFlash * 3);

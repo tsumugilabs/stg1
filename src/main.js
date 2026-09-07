@@ -6,6 +6,7 @@ import { Game } from './game/game.js';
 import { drawEnemy } from './render/sprites.js';
 import { ERAS } from './game/levels.js';
 import { makePart, MODULES, RARITIES } from './game/gear.js';
+import { CRAFT } from './game/craft.js';
 
 const canvas = document.getElementById('screen');
 
@@ -58,6 +59,7 @@ window.__eras = ERAS;
 window.__makePart = makePart;
 window.__modules = MODULES;
 window.__rarities = RARITIES;
+window.__craft = CRAFT;
 
 function handleResize() {
   fitCanvas();
