@@ -14,8 +14,13 @@ import { lerp } from '../core/math.js';
  * fraction of a second old.
  */
 
-/** How far behind the newest snapshot a guest draws. Two frames of slack. */
-export const INTERP_DELAY = 0.1;
+/**
+ * How far behind the newest snapshot a guest draws everything except its own
+ * craft. A little over one snapshot interval: enough that there is always a
+ * pair to interpolate between, and no more, because every millisecond here is
+ * a millisecond of lag on everybody else's aircraft.
+ */
+export const INTERP_DELAY = 0.07;
 
 export function encode(game) {
   const snap = {
@@ -55,6 +60,10 @@ export function encode(game) {
     f: game.flares.map((flare) => [Math.round(flare.x), Math.round(flare.y), Math.round(flare.radius)]),
     u: game.parachutists.map((chute) => [Math.round(chute.x), Math.round(chute.y), Math.round(chute.phase * 100) / 100]),
     m: game.pickups.map((pickup) => [Math.round(pickup.x), Math.round(pickup.y), pickup.moduleId]),
+    // Everything that happened since the last snapshot: explosions, banners,
+    // the flagship going up. A guest simulates none of it and would otherwise
+    // fly through a silent, still sky.
+    ev: game.netEvents,
   };
   snap.o = game.boss ? [
     Math.round(game.boss.x), Math.round(game.boss.y),

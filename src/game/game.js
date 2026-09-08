@@ -25,6 +25,7 @@ import { beamEnd, distanceToSegment, drawBeam, Flare } from './weapons.js';
 import { cycleAt, difficultyAt, eraAt, ERAS, toughnessAt } from './levels.js';
 import { codeLayout, drawLobby, hitButton, menuLayout, roomLayout } from './lobby.js';
 import { Room } from '../net/room.js';
+import { INTERP_DELAY, readPlayer } from '../net/snapshot.js';
 import {
   hostOnline, hostOverTabs, joinOnline, joinOverTabs, makeCode, onlineAvailable,
 } from '../net/link.js';
@@ -71,6 +72,12 @@ const CROWD_HEADROOM = 2;
 const CODE_KEYS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 /** How far from the nearest craft a round survives before it is swept up. */
 const BULLET_RANGE = 1600;
+/**
+ * How far a guest's own craft may sit from where the host has it before
+ * anything is done about it. Below this the prediction is simply right enough,
+ * and correcting inside it is what made the controls feel heavy.
+ */
+const PREDICTION_SLACK = 26;
 
 /*
  * Squadron ranks, from the second lap onwards.
@@ -202,6 +209,9 @@ export class Game {
     this.replica = false;
     this.replicaEnemies = new Map();
     this.nextNetId = 1;
+    // Things that happened this tick, for the guests. Cleared by each snapshot.
+    this.netEvents = [];
+    this.netPlayed = -1;
     this.loadoutBoxes = null;
     this.loadoutPane = 'slots';
     this.slotIndex = 0;
@@ -454,11 +464,10 @@ export class Game {
       player.modules.push(id);
       this.applyModules(player);
       gained.push(`${player.name} ${MODULES[id].name}`);
-      this.effects.ring(player.x, player.y, { radius: 84, color: MODULES[id].color, life: 0.5 });
+      this.emit('rank', player.x, player.y, MODULES[id].color);
     }
-    this.showBanner(`RANK ${this.squadRank}`, 2.2);
-    if (gained.length) this.showLoot(gained.join(' ・ '));
-    this.sfx.rescue();
+    this.emit('banner', 0, 0, { t: `RANK ${this.squadRank}`, d: 2.2 });
+    if (gained.length) this.emit('loot', 0, 0, gained.join(' ・ '));
   }
 
   /**
@@ -512,7 +521,7 @@ export class Game {
     this.cam.x = 0;
     this.cam.y = 0;
     this.state = 'playing';
-    this.showBanner(`${era.label}  ${era.subtitle}`, 2.6);
+    this.emit('banner', 0, 0, { t: `${era.label}  ${era.subtitle}`, d: 2.6 });
   }
 
   startNewGame() {
@@ -593,7 +602,7 @@ export class Game {
       difficulty: this.difficulty,
       toughness: this.toughness,
     });
-    this.showBanner(`${this.era.bossName} INBOUND`, 2.6);
+    this.emit('banner', 0, 0, { t: `${this.era.bossName} INBOUND`, d: 2.6 });
     this.sfx.eraJump();
   }
 
@@ -720,8 +729,132 @@ export class Game {
       if (!enemy.dead && hits(enemy)) this.damageEnemy(enemy, spec.damage);
     }
     if (this.boss && hits(this.boss)) {
-      this.effects.burst(this.boss.x, this.boss.y, { count: 4, speed: 80, life: 0.25, size: 2 });
+      this.emit('bosshit', this.boss.x, this.boss.y);
       if (this.boss.hit(spec.damage)) this.killBoss(this.boss);
+    }
+  }
+
+  /**
+   * Something happened that a player should see and hear.
+   *
+   * A guest runs no game logic at all — that is what makes the host
+   * authoritative — so nothing on a guest's screen ever exploded and no
+   * flagship ever announced itself. The host plays each of these and puts it
+   * on the wire; the guest replays it through the same code, so the two
+   * screens show the same thing rather than two implementations of it.
+   */
+  emit(kind, x, y, extra = null) {
+    this.playEffect(kind, x, y, extra);
+    if (!this.room || !this.room.isHost || !this.room.started) return;
+    const event = extra === null
+      ? [kind, Math.round(x), Math.round(y)]
+      : [kind, Math.round(x), Math.round(y), extra];
+    this.netEvents.push(event);
+    // A guest that has been away for a moment wants the recent past, not all
+    // of it; anything older than a couple of snapshots is not worth showing.
+    if (this.netEvents.length > 48) this.netEvents.shift();
+  }
+
+  /** Shake, but only for whoever it happened near. */
+  jolt(amount, x, y) {
+    const me = this.player;
+    if (!me) return;
+    const near = distance(x, y, me.x, me.y) < 900;
+    if (near) this.shake = Math.max(this.shake, amount);
+  }
+
+  playEffect(kind, x, y, extra) {
+    switch (kind) {
+      case 'kill':
+        this.effects.burst(x, y, { count: 16, speed: 190 });
+        this.effects.ring(x, y, { radius: 56 });
+        if (extra) this.effects.popup(x, y - 18, String(extra));
+        this.sfx.explosion();
+        this.jolt(0.25, x, y);
+        break;
+      case 'graze':
+        this.effects.burst(x, y, {
+          count: 5, speed: 110, life: 0.22, size: 2, colors: ['#ffe066', '#ffffff'],
+        });
+        this.sfx.hit();
+        break;
+      case 'boss':
+        for (let i = 0; i < 5; i += 1) {
+          this.effects.burst(x + randRange(-40, 40), y + randRange(-40, 40),
+            { count: 22, speed: 260, life: 0.9, size: 4 });
+        }
+        this.effects.ring(x, y, { radius: 240, life: 0.9, width: 6 });
+        if (extra) this.effects.popup(x, y - 40, String(extra), '#ffd166');
+        this.sfx.bigExplosion();
+        this.jolt(1, x, y);
+        break;
+      case 'bosshit':
+        this.effects.burst(x, y, { count: 5, speed: 90, life: 0.3, size: 2 });
+        this.sfx.hit();
+        break;
+      case 'hurt':
+        this.effects.burst(x, y, {
+          count: 10, speed: 150, life: 0.4, size: 2.6, colors: ['#ff8f8f', '#ffd166', '#ffffff'],
+        });
+        this.effects.ring(x, y, { radius: 62, life: 0.35, color: '#ff8f8f' });
+        this.sfx.hit();
+        this.jolt(0.45, x, y);
+        break;
+      case 'lost':
+        this.effects.burst(x, y, {
+          count: 30, speed: 240, life: 0.9, size: 4, colors: ['#7cf5ff', '#ffffff', '#ffd166'],
+        });
+        this.effects.ring(x, y, { radius: 150, life: 0.7, color: '#7cf5ff', width: 5 });
+        this.sfx.bigExplosion();
+        this.jolt(0.9, x, y);
+        break;
+      case 'saved':
+        this.effects.popup(x, y - 26, `${extra || 'PILOT'} RESCUED`, '#7cf5ff');
+        this.effects.ring(x, y, { radius: 96, life: 0.6, color: '#7cf5ff', width: 4 });
+        this.sfx.rescue();
+        break;
+      case 'gone':
+        this.effects.ring(x, y, { radius: 74, life: 0.5, color: '#5d7085' });
+        break;
+      case 'chute':
+        this.effects.popup(x, y - 20, `+${extra}`, '#ffd166');
+        this.effects.ring(x, y, { radius: 60, color: '#ffd166' });
+        this.sfx.rescue();
+        break;
+      case 'module': {
+        const module = MODULES[extra];
+        if (!module) break;
+        this.effects.popup(x, y - 22, module.name, module.color);
+        this.effects.ring(x, y, { radius: 90, color: module.color, life: 0.5 });
+        this.sfx.rescue();
+        break;
+      }
+      case 'rank':
+        this.effects.ring(x, y, { radius: 84, color: extra || '#ffd166', life: 0.5 });
+        this.sfx.rescue();
+        break;
+      case 'banner':
+        this.showBanner(extra.t, extra.d);
+        break;
+      case 'loot':
+        this.showLoot(extra);
+        break;
+      default:
+        break;
+    }
+  }
+
+  /**
+   * Replays what the host says happened. Keyed on the snapshot's clock, since
+   * a guest reads the newest snapshot on every frame and would otherwise
+   * explode the same aircraft sixty times.
+   */
+  playEvents(snap) {
+    if (!snap || !snap.ev || !snap.ev.length) return;
+    if (snap.c <= this.netPlayed) return;
+    this.netPlayed = snap.c;
+    for (const [kind, x, y, extra] of snap.ev) {
+      this.playEffect(kind, x, y, extra === undefined ? null : extra);
     }
   }
 
@@ -797,8 +930,16 @@ export class Game {
       case 'loadout': this.updateLoadout(dt); break;
       case 'playing': this.updatePlaying(dt); break;
       case 'paused': this.updatePaused(); break;
-      case 'eraclear': this.updateEraClear(dt); break;
-      case 'gameover': this.updateGameOver(dt); break;
+      // A guest keeps taking snapshots through these screens; running the
+      // host's logic locally would have it jumping to the next era on its own.
+      case 'eraclear':
+        if (this.replica) this.updateReplica(dt);
+        else this.updateEraClear(dt);
+        break;
+      case 'gameover':
+        if (this.replica) this.updateGuestOver(dt);
+        else this.updateGameOver(dt);
+        break;
       default: break;
     }
 
@@ -1192,6 +1333,16 @@ export class Game {
     }
   }
 
+  /** A guest's game over: keep drawing the host's world until they leave. */
+  updateGuestOver(dt) {
+    this.updateReplica(dt);
+    if (this.stateTimer > 0) this.stateTimer -= dt;
+    if (this.input.wantsStart()) {
+      this.leaveRoom();
+      this.state = 'title';
+    }
+  }
+
   /** Shared by every attract-style screen: keep the sky moving underneath. */
   driftAttract(dt) {
     this.player.angle += 0.16 * dt;
@@ -1527,6 +1678,8 @@ export class Game {
 
     const me = this.player;
     if (me && me.alive) me.steer(dt, this.input);
+    const wasBoosting = me ? me.boosting : false;
+    const wasBraking = me ? me.braking : false;
 
     const players = room.interp.players();
     players.forEach((state, i) => {
@@ -1545,18 +1698,38 @@ export class Game {
         ? { timer: state.chuteTimer, window: 20, phase: this.time, drift: 0, fall: 0 }
         : null;
       if (i === this.localIndex && player.alive) {
-        // Prediction plus correction: snap only when the two have diverged
-        // beyond anything a player would read as their own flying.
-        const gap = distance(player.x, player.y, state.x, state.y);
-        if (gap > 260) {
-          player.x = state.x;
-          player.y = state.y;
-          player.angle = state.angle;
-        } else {
-          const pull = Math.min(1, dt * 4);
-          player.x += (state.x - player.x) * pull;
-          player.y += (state.y - player.y) * pull;
+        /*
+         * Your own craft is reconciled against the host's newest word, not
+         * against the interpolated past that everything else is drawn from.
+         *
+         * Correcting towards the interpolated position was pulling the craft
+         * back onto where it had been a tenth of a second ago, every frame.
+         * The prediction runs forward at full speed and the correction hauls
+         * it back, which settles at a permanent lag and feels like flying
+         * through treacle. Carrying the newest snapshot forward by the time it
+         * spent in transit, and leaving small errors alone entirely, gives the
+         * stick back its immediacy.
+         */
+        const latest = room.interp.latest;
+        const auth = latest && latest.p[i] ? readPlayer(latest.p[i]) : state;
+        const lead = INTERP_DELAY;
+        const ax = auth.x + Math.cos(auth.angle) * player.speed * lead;
+        const ay = auth.y + Math.sin(auth.angle) * player.speed * lead;
+        const gap = distance(player.x, player.y, ax, ay);
+        if (gap > 300) {
+          player.x = ax;
+          player.y = ay;
+          player.angle = auth.angle;
+        } else if (gap > PREDICTION_SLACK) {
+          // Only the part of the error that is past the slack, and gently.
+          const pull = Math.min(0.4, dt * 2.5) * ((gap - PREDICTION_SLACK) / gap);
+          player.x += (ax - player.x) * pull;
+          player.y += (ay - player.y) * pull;
         }
+        // Boost and brake are this seat's own business; taking them from a
+        // stale snapshot made the throttle flicker.
+        player.boosting = wasBoosting;
+        player.braking = wasBraking;
         return;
       }
       player.x = state.x;
@@ -1577,7 +1750,11 @@ export class Game {
     this.score = snap.s;
     this.squadRank = snap.r;
     this.rankKills = snap.rk;
-    if (snap.st === 'gameover' && this.state === 'playing') this.state = 'gameover';
+    this.playEvents(snap);
+    // The host's screen state carries the between-era and end-of-run messages.
+    if (snap.st !== this.state && ['playing', 'eraclear', 'gameover'].includes(snap.st)) {
+      this.state = snap.st;
+    }
 
     const era = this.era;
     const seen = new Set();
@@ -1751,15 +1928,13 @@ export class Game {
     pilot.reset(x, y);
     this.clearAround(x, y);
     this.addScore(PILOT_RESCUE);
-    this.effects.popup(x, y - 26, `${pilot.name} RESCUED`, '#7cf5ff');
-    this.effects.ring(x, y, { radius: 96, life: 0.6, color: '#7cf5ff', width: 4 });
-    this.sfx.rescue();
+    this.emit('saved', x, y, pilot.name);
   }
 
   /** Nobody reached them. Now it costs a craft, the way it always used to. */
   losePilot(player) {
     player.chute = null;
-    this.effects.ring(player.x, player.y, { radius: 74, life: 0.5, color: '#5d7085' });
+    this.emit('gone', player.x, player.y);
     if (player.local) this.rescueChain = 0;
     player.lives -= 1;
     if (player.lives <= 0) {
@@ -1855,10 +2030,7 @@ export class Game {
     if (!enemy.hit(damage)) {
       // It has to be obvious that the shot landed, or a tougher escort just
       // reads as a shot that missed.
-      this.effects.burst(enemy.x, enemy.y, {
-        count: 5, speed: 110, life: 0.22, size: 2, colors: ['#ffe066', '#ffffff'],
-      });
-      this.sfx.hit();
+      this.emit('graze', enemy.x, enemy.y);
       return false;
     }
     this.killEnemy(enemy);
@@ -1869,11 +2041,7 @@ export class Game {
     enemy.dead = true;
     this.kills += 1;
     this.addScore(enemy.score);
-    this.effects.burst(enemy.x, enemy.y, { count: 16, speed: 190 });
-    this.effects.ring(enemy.x, enemy.y, { radius: 56 });
-    this.effects.popup(enemy.x, enemy.y - 18, String(enemy.score));
-    this.sfx.explosion();
-    this.shake = Math.max(this.shake, 0.25);
+    this.emit('kill', enemy.x, enemy.y, enemy.score);
 
     if (!enemy.isEscort && Math.random() < 0.22 && this.parachutists.length < 3) {
       this.parachutists.push(new Parachutist(enemy.x, enemy.y));
@@ -1909,10 +2077,8 @@ export class Game {
     this.modules.push(pickup.moduleId);
     this.rebuildCraft({ inFlight: true });
     const module = MODULES[pickup.moduleId];
-    this.effects.popup(pickup.x, pickup.y - 22, module.name, module.color);
-    this.effects.ring(pickup.x, pickup.y, { radius: 90, color: module.color, life: 0.5 });
-    this.sfx.rescue();
-    this.showLoot(`${module.name} — ${module.blurb}`);
+    this.emit('module', pickup.x, pickup.y, pickup.moduleId);
+    this.emit('loot', 0, 0, `${module.name} — ${module.blurb}`);
   }
 
   showLoot(text) {
@@ -1946,17 +2112,7 @@ export class Game {
     this.addScore(boss.score);
     if (this.sortie) this.awardPart();
     this.creditRank(RANK_BOSS_KILLS);
-    for (let i = 0; i < 5; i += 1) {
-      this.effects.burst(
-        boss.x + randRange(-40, 40),
-        boss.y + randRange(-40, 40),
-        { count: 22, speed: 260, life: 0.9, size: 4 },
-      );
-    }
-    this.effects.ring(boss.x, boss.y, { radius: 240, life: 0.9, width: 6 });
-    this.effects.popup(boss.x, boss.y - 40, String(boss.score), '#ffd166');
-    this.sfx.bigExplosion();
-    this.shake = 1;
+    this.emit('boss', boss.x, boss.y, boss.score);
     this.boss = null;
     this.enemies.length = 0;
     this.state = 'eraclear';
@@ -1984,24 +2140,14 @@ export class Game {
     const outcome = player.takeHit();
     if (outcome === 'ignored') return;
     if (outcome === 'damaged') {
-      this.effects.burst(player.x, player.y, {
-        count: 10, speed: 150, life: 0.4, size: 2.6, colors: ['#ff8f8f', '#ffd166', '#ffffff'],
-      });
-      this.effects.ring(player.x, player.y, { radius: 62, life: 0.35, color: '#ff8f8f' });
-      this.sfx.hit();
-      if (player.local) this.shake = Math.max(this.shake, 0.45);
+      this.emit('hurt', player.x, player.y);
       return;
     }
     this.destroyPlayer(player);
   }
 
   destroyPlayer(player = this.player) {
-    this.effects.burst(player.x, player.y, {
-      count: 30, speed: 240, life: 0.9, size: 4, colors: ['#7cf5ff', '#ffffff', '#ffd166'],
-    });
-    this.effects.ring(player.x, player.y, { radius: 150, life: 0.7, color: '#7cf5ff', width: 5 });
-    this.sfx.bigExplosion();
-    if (player.local) this.shake = 0.9;
+    this.emit('lost', player.x, player.y);
     if (player.alive) {
       // Called directly (debug, tests): take the craft down properly.
       player.hp = 0;
@@ -2027,8 +2173,7 @@ export class Game {
         }
         if (!bullet.dead && this.boss && circlesOverlap(bullet, this.boss)) {
           bullet.dead = true;
-          this.effects.burst(bullet.x, bullet.y, { count: 5, speed: 90, life: 0.3, size: 2 });
-          this.sfx.hit();
+          this.emit('bosshit', bullet.x, bullet.y);
           if (this.boss.hit(bullet.damage)) this.killBoss(this.boss);
         }
       } else {
@@ -2076,9 +2221,7 @@ export class Game {
         const bonus = RESCUE_BONUS[Math.min(this.rescueChain, RESCUE_BONUS.length - 1)];
         this.rescueChain += 1;
         this.addScore(bonus);
-        this.effects.popup(chute.x, chute.y - 20, `+${bonus}`, '#ffd166');
-        this.effects.ring(chute.x, chute.y, { radius: 60, color: '#ffd166' });
-        this.sfx.rescue();
+        this.emit('chute', chute.x, chute.y, bonus);
       }
     }
   }
