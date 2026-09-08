@@ -295,11 +295,16 @@ export class Player {
     if (this.invulnerable > 0) this.invulnerable -= dt;
     if (this.hitFlash > 0) this.hitFlash -= dt;
 
-    const shotsAlive = game.bullets.reduce((n, b) => (b.team === 'player' ? n + 1 : n), 0);
+    // Rounds this pilot has in the air. Counting every player's rounds made
+    // the magazine a shared pool: two people firing halved each other's rate
+    // of fire, four people quartered it.
+    const shotsAlive = game.bullets.reduce(
+      (n, b) => (b.team === 'player' && b.owner === this.index ? n + 1 : n), 0,
+    );
     if (input.isHeld('fire') && this.fireTimer <= 0 && shotsAlive < craft.maxShots) {
       this.fireTimer = craft.fireCooldown;
       this.sinceFired = 0;
-      game.firePlayerVolley(this.x, this.y, this.angle);
+      game.firePlayerVolley(this);
     }
 
     if (craft.trail) {
@@ -397,7 +402,7 @@ export class Player {
     pod.fireTimer -= dt;
     if (target && pod.fireTimer <= 0) {
       pod.fireTimer = 0.42;
-      game.firePodShot(pod.x, pod.y, pod.angle);
+      game.firePodShot(this, pod.x, pod.y, pod.angle);
     }
   }
 

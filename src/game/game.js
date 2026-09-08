@@ -68,6 +68,8 @@ const CROWD_RADIUS = 620;
 const CROWD_HEADROOM = 2;
 /** The characters a room code can contain, for typing one on a keyboard. */
 const CODE_KEYS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+/** How far from the nearest craft a round survives before it is swept up. */
+const BULLET_RANGE = 1600;
 
 /*
  * Squadron ranks, from the second lap onwards.
@@ -188,6 +190,9 @@ export class Game {
     this.netReady = false;
     this.netClock = 0;
     this.lobbyBoxes = null;
+    // True while the craft cards were opened from a room rather than from the
+    // mode screen, so confirming goes back instead of launching.
+    this.fromLobby = false;
     // A guest draws the host's world instead of simulating its own.
     this.replica = false;
     this.replicaEnemies = new Map();
@@ -587,9 +592,16 @@ export class Game {
     this.sfx.eraJump();
   }
 
-  /** One trigger pull: every barrel the craft carries fires together. */
-  firePlayerVolley(x, y, angle) {
-    const craft = this.craft;
+  /**
+   * One trigger pull: every barrel the craft carries fires together.
+   *
+   * Takes the player, not just a position. Reading `this.craft` here meant the
+   * host's airframe fired every seat's guns — a guest in an EAGLE got the
+   * host's rounds, in the host's colour, doing the host's damage.
+   */
+  firePlayerVolley(player) {
+    const craft = player.craft;
+    const { x, y, angle } = player;
     const sideX = Math.cos(angle + Math.PI / 2);
     const sideY = Math.sin(angle + Math.PI / 2);
     for (const barrel of craft.barrels) {
@@ -604,13 +616,14 @@ export class Game {
         radius: craft.bulletRadius,
         damage: craft.damage,
         pierce: craft.pierce,
+        owner: player.index,
       }));
     }
     this.sfx.playerShot();
   }
 
-  firePodShot(x, y, angle) {
-    const craft = this.craft;
+  firePodShot(player, x, y, angle) {
+    const craft = player.craft;
     this.bullets.push(new Bullet({
       x, y, angle,
       speed: craft.bulletSpeed * 0.92,
@@ -620,29 +633,34 @@ export class Game {
       radius: 2.4,
       damage: craft.damage,
       pierce: 0,
+      owner: player.index,
     }));
   }
 
-  /** Every escort currently inside the view, plus the flagship if it is. */
-  onScreenTargets() {
+  /**
+   * Every escort inside one player's view, plus the flagship if it is there.
+   * Takes the player rather than reading the camera: everyone has their own
+   * screen, and a swarm fired from a remote seat must answer to what that
+   * pilot can see, not to what the host can.
+   */
+  onScreenTargets(around = this.player) {
     const margin = 40;
-    const visible = (thing) => {
-      const sx = thing.x - this.cam.x + this.cam.width / 2;
-      const sy = thing.y - this.cam.y + this.cam.height / 2;
-      return sx > -margin && sx < this.cam.width + margin
-        && sy > -margin && sy < this.cam.height + margin;
-    };
+    const halfW = this.cam.width / 2 + margin;
+    const halfH = this.cam.height / 2 + margin;
+    const visible = (thing) => Math.abs(thing.x - around.x) < halfW
+      && Math.abs(thing.y - around.y) < halfH;
     const found = this.enemies.filter((e) => !e.dead && visible(e));
     if (this.boss && visible(this.boss)) found.push(this.boss);
     return found;
   }
 
-  spawnMissile(x, y, angle, target, spec, color) {
+  spawnMissile(x, y, angle, target, spec, color, owner = 0) {
     this.bullets.push(new Bullet({
       x, y, angle,
       speed: spec.speed,
       life: spec.life,
       team: 'player',
+      owner,
       color,
       radius: 3.4,
       damage: spec.damage,
@@ -659,7 +677,7 @@ export class Game {
       this.spawnMissile(
         player.x - Math.sin(player.angle) * (i % 2 ? 10 : -10),
         player.y + Math.cos(player.angle) * (i % 2 ? 10 : -10),
-        player.angle + offset, target, spec, '#ff9f43',
+        player.angle + offset, target, spec, '#ff9f43', player.index,
       );
     }
     this.sfx.playerShot();
@@ -667,12 +685,12 @@ export class Game {
 
   /** One missile for every target in view, each on its own mark. */
   fireSwarm(player, spec) {
-    const targets = this.onScreenTargets().slice(0, spec.maxTargets);
+    const targets = this.onScreenTargets(player).slice(0, spec.maxTargets);
     if (!targets.length) return;
     targets.forEach((target, i) => {
       const offset = (i / targets.length) * Math.PI * 2;
       this.spawnMissile(player.x, player.y, player.angle + Math.sin(offset) * 1.2,
-        target, spec, '#c58bf0');
+        target, spec, '#c58bf0', player.index);
     });
     this.effects.ring(player.x, player.y, { radius: 120, color: '#c58bf0', life: 0.4 });
     this.sfx.playerShot();
@@ -700,6 +718,15 @@ export class Game {
       this.effects.burst(this.boss.x, this.boss.y, { count: 4, speed: 80, life: 0.25, size: 2 });
       if (this.boss.hit(spec.damage)) this.killBoss(this.boss);
     }
+  }
+
+  /** True when any craft in the flight is within `range` of a point. */
+  nearAnyPlayer(x, y, range) {
+    for (const player of this.players) {
+      if (player.out) continue;
+      if (distance(x, y, player.x, player.y) < range) return true;
+    }
+    return false;
   }
 
   /** Closest escort, or the flagship, within `range` of a point. */
@@ -854,12 +881,38 @@ export class Game {
     return onlineAvailable();
   }
 
+  /** From the room screen to the craft cards and back. */
+  openCraftPick() {
+    this.fromLobby = true;
+    this.state = 'select';
+    this.sfx.hit();
+  }
+
+  returnToLobby() {
+    this.fromLobby = false;
+    this.state = 'lobby';
+    this.announceCraft();
+  }
+
+  /** Tells the room what this seat is flying, whichever side of it we are. */
+  announceCraft() {
+    const room = this.room;
+    if (!room) return;
+    if (room.isHost) {
+      room.slots[0].craft = this.baseCraft.id;
+      room.broadcastLobby();
+      return;
+    }
+    room.sendPick(this.baseCraft.id);
+  }
+
   openLobby() {
     this.leaveRoom();
     this.netStage = 'menu';
     this.netError = '';
     this.netCode = '';
     this.netReady = false;
+    this.fromLobby = false;
     this.state = 'lobby';
     this.sfx.hit();
   }
@@ -890,6 +943,7 @@ export class Game {
       return;
     }
     this.room = room;
+    room.slots[0].craft = this.baseCraft.id;
     this.mode = 'squadron';
     this.modeIndex = Math.max(0, MODES.findIndex((m) => m.id === 'squadron'));
     this.netStage = 'room';
@@ -970,7 +1024,8 @@ export class Game {
       : stage === 'code'
         ? [...this.lobbyBoxes.keys, this.lobbyBoxes.del, this.lobbyBoxes.go, this.lobbyBoxes.back]
         : stage === 'room'
-          ? [...this.lobbyBoxes.sizes, this.lobbyBoxes.action, this.lobbyBoxes.back]
+          ? [...this.lobbyBoxes.rows, ...this.lobbyBoxes.sizes,
+            this.lobbyBoxes.action, this.lobbyBoxes.back]
           : [this.lobbyBoxes.back];
     const tapped = point ? hitButton(point, boxes) : null;
     if (tapped) touch.tapPoint = null;
@@ -999,6 +1054,7 @@ export class Game {
     }
     if (!pressed && stage === 'room') {
       if (this.input.wasPressed('start') || this.input.wasPressed('fire')) pressed = 'action';
+      else if (this.input.wasPressed('down') || this.input.wasPressed('up')) pressed = 'mycraft';
     }
     if (!pressed && (stage === 'error' || stage === 'menu') && this.input.wasPressed('pause')) {
       pressed = 'back';
@@ -1041,6 +1097,12 @@ export class Game {
       if (CODE_KEYS.includes(id) && this.netCode.length < 4) { this.netCode += id; return; }
     }
     if (stage === 'room' && this.room) {
+      // Your own row is the way to your own aircraft. Nobody else's is.
+      if (id === 'mycraft' || id === `seat${this.room.seat}`) {
+        this.openCraftPick();
+        return;
+      }
+      if (id.startsWith('seat')) return;
       if (id === 'action') {
         if (this.room.isHost) this.launchRoom();
         else {
@@ -1297,9 +1359,18 @@ export class Game {
       || (this.input.wasPressed('fire') && this.isSelectable(this.craft));
     if (launch && this.isSelectable(this.craft)) {
       writeStored(CRAFT_KEY, this.baseCraft.id);
+      // Opened from a room: choosing a craft goes back to the room rather
+      // than launching, because it is not this seat's decision when to fly.
+      if (this.fromLobby) {
+        this.returnToLobby();
+        return;
+      }
       this.startNewGame();
     }
-    if (this.input.wasPressed('pause')) this.state = 'mode';
+    if (this.input.wasPressed('pause')) {
+      if (this.fromLobby) this.returnToLobby();
+      else this.state = 'mode';
+    }
   }
 
   /** The old arcade sequence, still good for opening the locked slot. */
@@ -1618,8 +1689,15 @@ export class Game {
     }
 
     for (const bullet of this.bullets) bullet.update(dt, this);
+    // Rounds are dropped once they are far from everyone, not far from the
+    // camera. The camera follows one seat; culling by it deleted a distant
+    // player's shots the frame they were fired, so their gun appeared to stop
+    // working the moment they flew more than a screen and a half from the
+    // host — and started working again the instant they respawned alongside
+    // somebody. No amount of AI testing could find it: wingmen are leashed at
+    // 330px and never go far enough.
     this.bullets = this.bullets.filter(
-      (b) => !b.dead && distance(b.x, b.y, this.cam.x, this.cam.y) < 1600,
+      (b) => !b.dead && this.nearAnyPlayer(b.x, b.y, BULLET_RANGE),
     );
 
     for (const flare of this.flares) flare.update(dt);
