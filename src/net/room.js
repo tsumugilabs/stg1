@@ -19,8 +19,13 @@ import { encode, Interpolator } from './snapshot.js';
  * is a real game, so nobody waits for a fourth.
  */
 
-/** Twenty a second. Below this it reads as stutter; above it buys nothing. */
-export const SNAPSHOT_HZ = 20;
+/**
+ * Thirty a second. Twenty was enough to interpolate between but it sets the
+ * floor on how stale everybody else's aircraft can be, and a guest reported
+ * exactly that as sluggishness. At about 330 bytes a snapshot this is still
+ * only ten kilobytes a second to each peer.
+ */
+export const SNAPSHOT_HZ = 30;
 /** A peer that has said nothing for this long is treated as gone. */
 export const TIMEOUT = 8;
 
@@ -223,6 +228,8 @@ export class Room {
     if (this.sinceSnapshot < 1 / SNAPSHOT_HZ) return;
     this.sinceSnapshot = 0;
     this.broadcast(encode(game));
+    // Sent once. Anything that happens after this belongs to the next one.
+    game.netEvents = [];
   }
 
   // --- guest --------------------------------------------------------------
