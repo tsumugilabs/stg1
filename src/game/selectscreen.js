@@ -212,12 +212,16 @@ export function sizeLayout(layout, width) {
   const height = Math.max(34, chip * 0.46);
   const gap = 10;
   const total = chip * 3 + gap * 2;
-  const left = (width - total) / 2;
+  // Centre the size chips and the ONLINE button together, not the chips alone.
+  const left = (width - (total + gap + chip * 1.5)) / 2;
   return {
     y,
     boxes: [0, 1, 2].map((i) => ({
       x: left + i * (chip + gap), y, w: chip, h: height,
     })),
+    // The way through to the room screen. Kept beside the size chips because
+    // "how many" and "who with" are the same decision.
+    online: { x: left + total + gap, y, w: chip * 1.5, h: height },
   };
 }
 
@@ -299,9 +303,20 @@ export function drawModeSelect(ctx, game, cam) {
       uiText(ctx, `${size}機`, box.x + box.w / 2, box.y + box.h * 0.68,
         Math.round(box.h * 0.44), picked ? '#7cf5ff' : UI_DIM);
     });
+    const online = sizes.online;
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle = UI_PANEL;
+    roundedRect(ctx, online.x, online.y, online.w, online.h, 10);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#ffd166';
+    ctx.stroke();
+    uiText(ctx, 'ONLINE', online.x + online.w / 2, online.y + online.h * 0.68,
+      Math.round(online.h * 0.36), '#ffd166');
     hint = game.touchMode
-      ? '編隊の機数をタップ ・ もう一度モードをタップで決定'
-      : '←  →  でモード ・ ↑  ↓  で機数 ・ ENTER で決定';
+      ? '機数をタップ ・ もう一度モードをタップで出撃 ・ ONLINE で合流'
+      : '←  →  でモード ・ ↑  ↓  で機数 ・ X でオンライン ・ ENTER で決定';
     uiText(ctx, hint, w / 2, sizes.y + sizes.boxes[0].h + 26, 14, UI_DIM);
     return;
   }
