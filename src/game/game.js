@@ -5,7 +5,7 @@ import { Bullet } from './bullet.js';
 import { Effects } from './effects.js';
 import { Enemy } from './enemy.js';
 import { Parachutist } from './parachutist.js';
-import { Player } from './player.js';
+import { Player, RESCUE_WINDOW } from './player.js';
 import { drawHud } from './hud.js';
 import {
   cardAt, inStart, MODES, modeLayout, selectLayout, sizeLayout, SQUAD_SIZES,
@@ -212,6 +212,7 @@ export class Game {
     // Things that happened this tick, for the guests. Cleared by each snapshot.
     this.netEvents = [];
     this.netPlayed = -1;
+    this.netEye = null;
     this.loadoutBoxes = null;
     this.loadoutPane = 'slots';
     this.slotIndex = 0;
@@ -296,6 +297,8 @@ export class Game {
   /** Line the flight up abreast so nobody starts inside anybody else. */
   placeFormation() {
     this.players.forEach((player, i) => {
+      // A craft that is out for good stays out; reset() would fly it again.
+      if (player.out) return;
       const side = i % 2 === 0 ? 1 : -1;
       const rank = Math.ceil(i / 2);
       player.reset(0, side * rank * 90);
@@ -310,6 +313,15 @@ export class Game {
   /** True once nobody in the squadron has anything left to fly. */
   get squadOut() {
     return this.players.every((p) => p.out);
+  }
+
+  /**
+   * Nobody can finish this era: everyone is either out for good or sitting it
+   * out, and a stranded pilot cannot shoot the flagship down. Without this the
+   * run would hang on an era that can never be cleared.
+   */
+  get squadStuck() {
+    return this.players.every((p) => p.out || p.stranded);
   }
 
   /** The craft the camera follows and the controls drive. */
@@ -517,7 +529,10 @@ export class Game {
     this.spawnTimer = randRange(...era.spawnInterval);
     this.parachuteTimer = randRange(6, 12);
     this.rescueChain = 0;
-    this.player.reset(0, 0);
+    // Everybody who still has a craft starts the era in formation, stranded
+    // pilots included: sitting out an era is the price, and it is paid in
+    // full when the era ends.
+    this.placeFormation();
     this.cam.x = 0;
     this.cam.y = 0;
     this.state = 'playing';
@@ -1695,8 +1710,9 @@ export class Game {
       player.braking = state.braking;
       player.invulnerable = state.invulnerable;
       player.chute = state.downed
-        ? { timer: state.chuteTimer, window: 20, phase: this.time, drift: 0, fall: 0 }
+        ? { timer: state.chuteTimer, window: RESCUE_WINDOW, phase: this.time, drift: 0, fall: 0 }
         : null;
+      player.stranded = state.stranded;
       if (i === this.localIndex && player.alive) {
         /*
          * Your own craft is reconciled against the host's newest word, not
@@ -1751,6 +1767,7 @@ export class Game {
     this.squadRank = snap.r;
     this.rankKills = snap.rk;
     this.playEvents(snap);
+    this.netEye = snap.w ? { x: snap.w[0], y: snap.w[1] } : null;
     // The host's screen state carries the between-era and end-of-run messages.
     if (snap.st !== this.state && ['playing', 'eraclear', 'gameover'].includes(snap.st)) {
       this.state = snap.st;
@@ -1822,7 +1839,7 @@ export class Game {
    */
   updatePlayers(dt) {
     for (const player of this.players) {
-      if (player.out) continue;
+      if (player.out || player.stranded) continue;
       if (player.alive) {
         player.update(dt, this.controllerFor(player, dt), this);
         continue;
@@ -1845,7 +1862,7 @@ export class Game {
       this.returnToTheAir(player);
     }
 
-    if (this.squadOut && this.state === 'playing') {
+    if ((this.squadOut || this.squadStuck) && this.state === 'playing') {
       this.state = 'gameover';
       this.stateTimer = 1.0;
       this.sfx.gameOver();
@@ -1932,6 +1949,14 @@ export class Game {
   }
 
   /** Nobody reached them. Now it costs a craft, the way it always used to. */
+  /**
+   * Nobody reached them in time.
+   *
+   * They do not come back this era. It costs a craft and then it costs the
+   * rest of the stage, watched from the enemy flagship — which is what makes
+   * a parachute worth breaking off a fight for rather than a thing you get
+   * round to. The flight can still finish the era without them, and does.
+   */
   losePilot(player) {
     player.chute = null;
     this.emit('gone', player.x, player.y);
@@ -1941,7 +1966,27 @@ export class Game {
       player.out = true;
       return;
     }
-    this.returnToTheAir(player);
+    player.stranded = true;
+    this.emit('banner', 0, 0, { t: `${player.name} MISSING`, d: 2.4 });
+  }
+
+  /**
+   * What a stranded pilot watches. The flagship if it is up; before it
+   * arrives, whichever escort is nearest the fight, so the view is always the
+   * enemy's rather than a patch of empty sky.
+   */
+  spectateTarget() {
+    if (this.boss) return this.boss;
+    // A guest has no escorts of its own to pick from before the flagship
+    // arrives, so the host says where to look.
+    if (this.replica && this.netEye) return this.netEye;
+    const flying = this.players.find((p) => p.flying);
+    if (flying) {
+      const enemy = this.nearestTarget(flying.x, flying.y, 4000);
+      if (enemy) return enemy;
+      return flying;
+    }
+    return this.player;
   }
 
   updateWorld(dt) {
@@ -2228,8 +2273,13 @@ export class Game {
 
   updateCamera() {
     const amount = this.shake * 8;
-    this.cam.x = this.player.x + (Math.random() - 0.5) * amount;
-    this.cam.y = this.player.y + (Math.random() - 0.5) * amount;
+    // A pilot who did not get picked up watches the rest of the era from the
+    // other side, so the camera leaves their wreck and rides the enemy.
+    const eye = this.player.stranded && this.state !== 'gameover'
+      ? this.spectateTarget()
+      : this.player;
+    this.cam.x = eye.x + (Math.random() - 0.5) * amount;
+    this.cam.y = eye.y + (Math.random() - 0.5) * amount;
     this.cam.era = this.era;
   }
 
