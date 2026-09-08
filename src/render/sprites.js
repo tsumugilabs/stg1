@@ -162,16 +162,28 @@ export function drawPlayer(ctx, { id = 'viper', colors, thrust = true, time = 0 
   (CRAFT_SHAPES[id] ?? drawViper)(ctx, palette, time);
 }
 
-/** A small drone that flies alongside the S.Wind and fires with it. */
-export function drawPod(ctx, colors, time) {
+/** Escort gun drone, shared by POD and S.WIND's BIT upgrades. Nose is +X. */
+export function drawPod(ctx, colors, time = 0) {
   ctx.save();
-  ctx.rotate(time * 3);
-  polygon(ctx, [[7, 0], [-3, -5], [-5, 0], [-3, 5]], colors.wingAlt);
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  // Keep the compact seven-pixel radius. The caller supplies the aim angle;
+  // only the recessed engine light pulses, so the barrel always faces its shot.
+  for (const side of [-1, 1]) {
+    polygon(ctx, [[2.7, side * 1.6], [0.5, side * 4.7], [-3.5, side * 4.7], [-5, side * 3], [-3.5, side * 1.3]], colors.wing, colors.glass);
+    polygon(ctx, [[1.9, side * 2], [0.1, side * 3.7], [-3.3, side * 3.7], [-2.3, side * 2]], colors.wingAlt);
+    airframeLine(ctx, [[-3.9, side * 2.7], [-3.9, side * 3.8]], colors.glass, 1.1);
+    airframeLine(ctx, [[-4.4, side * 2.8], [-4.4, side * 3.6]], colors.accent, 0.65, 0.65 + Math.sin(time * 7) * 0.15);
+    airframeLine(ctx, [[-1.6, side * 4.1], [-0.4, side * 4.1]], colors.body, 0.55, 0.8);
+  }
+  // Faceted centre housing and a forward gun rail; no manned canopy.
+  polygon(ctx, [[4.8, 0], [2.2, 2.4], [-2.8, 2.5], [-4.7, 0], [-2.8, -2.5], [2.2, -2.4]], airframeMetal(ctx, colors, 2.5), colors.glass);
+  polygon(ctx, [[-2.8, -0.9], [0.4, -1.3], [2.2, 0], [0.4, 1.3], [-2.8, 0.9]], colors.glass);
+  airframeLine(ctx, [[-2, -0.6], [0.4, -0.6]], colors.accent, 0.85);
+  polygon(ctx, [[2.4, -0.9], [6.5, -0.65], [6.5, 0.65], [2.4, 0.9]], colors.wingAlt, colors.glass);
+  airframeLine(ctx, [[3, -0.35], [5.6, -0.35]], colors.body, 0.55);
+  airframeLine(ctx, [[6.5, -0.55], [6.5, 0.55]], colors.glass, 0.8);
   ctx.restore();
-  ctx.beginPath();
-  ctx.arc(0, 0, 3.2, 0, Math.PI * 2);
-  ctx.fillStyle = colors.accent;
-  ctx.fill();
 }
 
 // Enemy artwork stays in the original local-space envelope. All airframe
