@@ -6,7 +6,7 @@ import { drawBossCraft } from '../render/sprites.js';
  * to be destroyed to jump to the next era.
  */
 export class Boss {
-  constructor({ x, y, angle, era, difficulty = 1 }) {
+  constructor({ x, y, angle, era, difficulty = 1, toughness = 1 }) {
     this.x = x;
     this.y = y;
     this.angle = angle;
@@ -15,7 +15,9 @@ export class Boss {
     this.radius = 48;
     this.speed = era.bossSpeed * Math.min(difficulty, 1.5);
     this.turnRate = era.bossTurn * Math.min(difficulty, 1.6);
-    this.maxHp = Math.round(era.bossHp * difficulty);
+    // Armour is the lap's doing, not the difficulty curve's: doubled on the
+    // second lap, tripled on the third. Speed and reach stay on `difficulty`.
+    this.maxHp = Math.round(era.bossHp * toughness);
     this.hp = this.maxHp;
     this.fireTimer = era.bossFire[1];
     // A flagship's guns reach far further than an escort's, so the opening

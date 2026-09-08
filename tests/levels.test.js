@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  CYCLE_DIFFICULTY_STEP, cycleAt, difficultyAt, eraAt, ERAS,
+  CYCLE_DIFFICULTY_STEP, cycleAt, difficultyAt, eraAt, ERAS, toughnessAt,
 } from '../src/game/levels.js';
 import { slowestCraft, widestTurningCraft } from '../src/game/craft.js';
 
@@ -138,4 +138,22 @@ test('a second lap of 1910 is harder than the first lap of 1940', () => {
   const lapTwoOpening = ERAS[0].enemySpeed * difficultyAt(ERAS.length);
   assert.ok(lapTwoOpening >= ERAS[1].enemySpeed * 0.95,
     `lap-2 1910 (${lapTwoOpening.toFixed(0)}) should be near or above 1940 (${ERAS[1].enemySpeed})`);
+});
+
+test('armour is the lap number, and the first lap is untouched', () => {
+  for (let index = 0; index < ERAS.length; index += 1) {
+    assert.equal(toughnessAt(index), 1, `era ${index} of the first lap should take one hit`);
+  }
+  assert.equal(toughnessAt(ERAS.length), 2);
+  assert.equal(toughnessAt(ERAS.length * 2), 3);
+  assert.equal(toughnessAt(ERAS.length * 3 + 4), 4);
+});
+
+test('armour and the difficulty curve are separate levers', () => {
+  // Speed and reach creep up 28% a lap; armour doubles then triples. Keeping
+  // them apart is what makes the second lap read as "tougher", not "faster".
+  const lapTwo = ERAS.length;
+  assert.equal(toughnessAt(lapTwo), 2);
+  assert.ok(difficultyAt(lapTwo) < 1.5,
+    `difficulty should stay a nudge, not a doubling: ${difficultyAt(lapTwo)}`);
 });

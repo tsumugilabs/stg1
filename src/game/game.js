@@ -14,7 +14,7 @@ import { loadoutLayout, ROWS_VISIBLE, rowAt } from './loadout.js';
 import {
   DEBUG_ACTIONS, DEBUG_TAP_GAP, DEBUG_TAPS, debugButtonAt, debugLayout,
 } from './debug.js';
-import { CRAFT, craftIndexById, DEFAULT_CRAFT } from './craft.js';
+import { craftById, CRAFT, craftIndexById, DEFAULT_CRAFT } from './craft.js';
 import {
   MODULES, makePart, partScore, resolveCraft, rollModule, SLOTS, WEAPONS,
 } from './gear.js';
@@ -22,7 +22,7 @@ import { drawDownedPilot } from '../render/sprites.js';
 import { ModulePickup } from './pickup.js';
 import { Wingman } from './wingman.js';
 import { beamEnd, distanceToSegment, drawBeam, Flare } from './weapons.js';
-import { cycleAt, difficultyAt, eraAt, ERAS } from './levels.js';
+import { cycleAt, difficultyAt, eraAt, ERAS, toughnessAt } from './levels.js';
 
 const HIGH_SCORE_KEY = 'chronopilot.highscore';
 const CRAFT_KEY = 'chronopilot.craft';
@@ -61,6 +61,24 @@ const CHUTE_REACH = 34;
 const CROWD_RADIUS = 620;
 /** Slack over the per-craft share, so the sky can breathe without flooding. */
 const CROWD_HEADROOM = 2;
+
+/*
+ * Squadron ranks, from the second lap onwards.
+ *
+ * The lap makes everything take two hits, then three; ranks are what the
+ * flight gets back. The level is shared and the rolls are not: everybody
+ * levels together off the flight's total kills, and then each craft draws its
+ * own module. That means no kill-stealing between four people, no arithmetic
+ * about who shot what, and four aircraft that have drifted into different
+ * shapes by the end of a long run.
+ *
+ * It is deliberately run-scoped. SORTIE keeps the locker and the parts that
+ * survive a run; SQUADRON's answer to a harder lap is growth inside that run.
+ */
+const RANK_FIRST = 14;
+const RANK_STEP = 7;
+/** A flagship is worth a good share of a rank on its own. */
+const RANK_BOSS_KILLS = 8;
 
 function readHighScore() {
   try {
@@ -347,6 +365,73 @@ export class Game {
     return difficultyAt(this.eraIndex);
   }
 
+  /** Hits everything takes on this lap: 1, then 2, then 3... */
+  get toughness() {
+    return toughnessAt(this.eraIndex);
+  }
+
+  /** Which lap this is, counting from one, for anything shown to a player. */
+  get lap() {
+    return cycleAt(this.eraIndex) + 1;
+  }
+
+  /**
+   * Ranks run in SQUADRON from the second lap. The first lap stays exactly as
+   * it was tuned — nothing to learn, nothing to manage, just the game.
+   */
+  get ranked() {
+    return this.squadron && this.lap > 1;
+  }
+
+  /** Kills still owed before the flight makes the next rank. */
+  get rankTarget() {
+    return Math.round((RANK_FIRST + (this.squadRank - 1) * RANK_STEP) * this.squadScale(0.5));
+  }
+
+  /**
+   * Credits the flight for a kill and promotes it if that was enough. Each
+   * craft draws its own module, so a flight of four ends a long run as four
+   * different aircraft rather than four copies.
+   */
+  creditRank(kills = 1) {
+    if (!this.ranked) return;
+    this.rankKills += kills;
+    while (this.rankKills >= this.rankTarget) {
+      this.rankKills -= this.rankTarget;
+      this.squadRank += 1;
+      this.promoteFlight();
+    }
+  }
+
+  promoteFlight() {
+    const gained = [];
+    for (const player of this.players) {
+      if (player.out) continue;
+      const id = rollModule(player.modules, player.baseId);
+      if (!id) continue;
+      player.modules.push(id);
+      this.applyModules(player);
+      gained.push(`${player.name} ${MODULES[id].name}`);
+      this.effects.ring(player.x, player.y, { radius: 84, color: MODULES[id].color, life: 0.5 });
+    }
+    this.showBanner(`RANK ${this.squadRank}`, 2.2);
+    if (gained.length) this.showLoot(gained.join(' ・ '));
+    this.sfx.rescue();
+  }
+
+  /**
+   * Rebuilds one craft from its own modules. The local seat also carries the
+   * locker parts, which belong to the person rather than to the run.
+   */
+  applyModules(player) {
+    if (player.local) {
+      this.modules = player.modules;
+      this.rebuildCraft({ inFlight: true });
+      return;
+    }
+    player.applyCraft(resolveCraft(craftById(player.baseId), [], player.modules));
+  }
+
   // --- run / era lifecycle -------------------------------------------------
 
   resetRun() {
@@ -359,6 +444,9 @@ export class Game {
     this.eraIndex = 0;
     this.nextExtraLife = EXTRA_LIFE_EVERY;
     this.rescueChain = 0;
+    this.squadRank = 1;
+    this.rankKills = 0;
+    for (const player of this.players) player.modules = [];
     this.startEra();
   }
 
@@ -419,6 +507,7 @@ export class Game {
         angle: heading,
         era: this.era,
         difficulty: this.difficulty,
+        toughness: this.toughness,
       }));
     }
   }
@@ -433,6 +522,7 @@ export class Game {
           this.nearestPlayer(spot.x, spot.y).x - spot.x),
         era: this.era,
         difficulty: this.difficulty,
+        toughness: this.toughness,
       });
       enemy.isEscort = true;
       this.enemies.push(enemy);
@@ -448,6 +538,7 @@ export class Game {
         this.nearestPlayer(spot.x, spot.y).x - spot.x),
       era: this.era,
       difficulty: this.difficulty,
+      toughness: this.toughness,
     });
     this.showBanner(`${this.era.bossName} INBOUND`, 2.6);
     this.sfx.eraJump();
@@ -560,7 +651,7 @@ export class Game {
     ) < spec.width + thing.radius;
 
     for (const enemy of this.enemies) {
-      if (!enemy.dead && hits(enemy)) this.killEnemy(enemy);
+      if (!enemy.dead && hits(enemy)) this.damageEnemy(enemy, spec.damage);
     }
     if (this.boss && hits(this.boss)) {
       this.effects.burst(this.boss.x, this.boss.y, { count: 4, speed: 80, life: 0.25, size: 2 });
@@ -1160,6 +1251,27 @@ export class Game {
     if (this.kills >= this.quota) this.spawnBoss();
   }
 
+  /**
+   * Gunfire on an escort. On the first lap every escort has one point of
+   * armour, so this is the old behaviour exactly; from the second lap on it
+   * takes two rounds, then three. Ramming still destroys outright — it costs
+   * the player a point of armour, which is price enough.
+   */
+  damageEnemy(enemy, damage = 1) {
+    if (enemy.dead) return false;
+    if (!enemy.hit(damage)) {
+      // It has to be obvious that the shot landed, or a tougher escort just
+      // reads as a shot that missed.
+      this.effects.burst(enemy.x, enemy.y, {
+        count: 5, speed: 110, life: 0.22, size: 2, colors: ['#ffe066', '#ffffff'],
+      });
+      this.sfx.hit();
+      return false;
+    }
+    this.killEnemy(enemy);
+    return true;
+  }
+
   killEnemy(enemy, chained = false) {
     enemy.dead = true;
     this.kills += 1;
@@ -1175,6 +1287,7 @@ export class Game {
     }
 
     if (this.sortie && Math.random() < MODULE_DROP_CHANCE) this.dropModule(enemy.x, enemy.y);
+    this.creditRank(1);
 
     // A blast from a kill takes anything alongside it, but the chain stops
     // there: secondary kills do not set off blasts of their own.
@@ -1183,7 +1296,7 @@ export class Game {
       this.effects.ring(enemy.x, enemy.y, { radius: blast * 2, color: '#ffb066', width: 4 });
       for (const other of this.enemies) {
         if (other.dead || distance(other.x, other.y, enemy.x, enemy.y) > blast) continue;
-        this.killEnemy(other, true);
+        if (other.hit(1)) this.killEnemy(other, true);
       }
       if (this.boss && distance(this.boss.x, this.boss.y, enemy.x, enemy.y) < blast + this.boss.radius) {
         if (this.boss.hit(1)) this.killBoss(this.boss);
@@ -1239,6 +1352,7 @@ export class Game {
   killBoss(boss) {
     this.addScore(boss.score);
     if (this.sortie) this.awardPart();
+    this.creditRank(RANK_BOSS_KILLS);
     for (let i = 0; i < 5; i += 1) {
       this.effects.burst(
         boss.x + randRange(-40, 40),
@@ -1315,7 +1429,7 @@ export class Game {
           if (enemy.dead || !circlesOverlap(bullet, enemy)) continue;
           if (bullet.pierce > 0) bullet.pierce -= 1;
           else bullet.dead = true;
-          this.killEnemy(enemy);
+          this.damageEnemy(enemy, bullet.damage);
           break;
         }
         if (!bullet.dead && this.boss && circlesOverlap(bullet, this.boss)) {
