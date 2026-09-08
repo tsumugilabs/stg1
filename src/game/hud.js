@@ -219,16 +219,29 @@ function squadPanel(ctx, game, right, top) {
   }
 }
 
-/** The air-brake reserve, sitting just under the armour pips. */
+/**
+ * The two reserves, stacked under the armour pips: brake in cyan, afterburner
+ * in amber. Same shape on purpose — they are the same kind of thing spent in
+ * opposite directions, and a player who learns one has learned both.
+ */
 function brakeGauge(ctx, game, x, y) {
   const player = game.player;
   const width = 15 * 5 + 3 * 4;
-  const empty = player.brakeCharge <= 0;
+  const half = (width - 6) / 2;
+
+  const brakeEmpty = player.brakeCharge <= 0;
   label(ctx, 'BRAKE', x, y - 7, { size: 9, color: DIM });
   ctx.fillStyle = '#22344a';
-  ctx.fillRect(x, y, width, 5);
-  ctx.fillStyle = player.braking ? '#ffffff' : (empty ? '#ff8f8f' : '#7cf5ff');
-  ctx.fillRect(x, y, width * clamp(player.brakeCharge, 0, 1), 5);
+  ctx.fillRect(x, y, half, 5);
+  ctx.fillStyle = player.braking ? '#ffffff' : (brakeEmpty ? '#ff8f8f' : '#7cf5ff');
+  ctx.fillRect(x, y, half * clamp(player.brakeCharge, 0, 1), 5);
+
+  const burnEmpty = player.burnerCharge <= 0;
+  label(ctx, 'BURN', x + half + 6, y - 7, { size: 9, color: DIM });
+  ctx.fillStyle = '#22344a';
+  ctx.fillRect(x + half + 6, y, half, 5);
+  ctx.fillStyle = player.boosting ? '#ffffff' : (burnEmpty ? '#ff8f8f' : '#ffb347');
+  ctx.fillRect(x + half + 6, y, half * clamp(player.burnerCharge, 0, 1), 5);
 }
 
 /** Armour remaining on the current craft, as one pip per point. */
@@ -289,7 +302,9 @@ export function drawHud(ctx, game, cam) {
 
   armourGauge(ctx, game, 18, h - 46);
   brakeGauge(ctx, game, 18, h - 18);
-  squadPanel(ctx, game, w - 16, 62);
+  // The pause button lives in that corner on a touch layout, so the flight
+  // roster drops below it rather than underneath it.
+  squadPanel(ctx, game, w - 16, game.touchMode ? 122 : 62);
   moduleChips(ctx, game, 16, 58);
 
   if (game.player.craft.stealth) {

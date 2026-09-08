@@ -42,6 +42,10 @@ export const CRAFT = [
     // turns while it is out. Turning radius is speed over turn rate, so the
     // deceleration alone is most of the effect.
     brake: { speed: 0.45, turn: 1.20 },
+    // Afterburner: the brake's opposite number. It buys speed and pays for it
+    // in turning, so a burn is a commitment to a straight line — good for
+    // closing, running, or reaching a parachute, bad in a turning fight.
+    burner: { speed: 1.70, turn: 0.80 },
     podCount: 0,
     missile: 0,
     flare: 0,
@@ -82,6 +86,7 @@ export const CRAFT = [
     // turns while it is out. Turning radius is speed over turn rate, so the
     // deceleration alone is most of the effect.
     brake: { speed: 0.36, turn: 1.35 },
+    burner: { speed: 1.55, turn: 0.88 },
     podCount: 0,
     missile: 0,
     flare: 0,
@@ -125,6 +130,7 @@ export const CRAFT = [
     // turns while it is out. Turning radius is speed over turn rate, so the
     // deceleration alone is most of the effect.
     brake: { speed: 0.62, turn: 1.08 },
+    burner: { speed: 1.95, turn: 0.66 },
     podCount: 0,
     missile: 0,
     flare: 0,
@@ -165,6 +171,7 @@ export const CRAFT = [
     // turns while it is out. Turning radius is speed over turn rate, so the
     // deceleration alone is most of the effect.
     brake: { speed: 0.42, turn: 1.28 },
+    burner: { speed: 1.78, turn: 0.80 },
     podCount: 0,
     missile: 0,
     flare: 0,
@@ -207,6 +214,7 @@ export const CRAFT = [
     // turns while it is out. Turning radius is speed over turn rate, so the
     // deceleration alone is most of the effect.
     brake: { speed: 0.40, turn: 1.30 },
+    burner: { speed: 1.90, turn: 0.90 },
     podCount: 1,
     missile: 0,
     flare: 0,

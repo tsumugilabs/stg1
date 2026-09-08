@@ -128,10 +128,20 @@ export class Wingman {
 
     this.dir = { x: Math.cos(aim), y: Math.sin(aim) };
 
-    // Use the air brake for the corners it was put there for.
-    const hardCorner = Math.abs(angleDiff(me.angle, aim)) > 1.1;
+    // Use the air brake for the corners it was put there for, and the burner
+    // for the opposite case: a long run already pointed the right way. Never
+    // both, and never the burner into a turn, which would only widen it.
+    const off = Math.abs(angleDiff(me.angle, aim));
+    const hardCorner = off > 1.1;
     this.held.delete('brake');
-    if (hardCorner && me.brakeCharge > 0.35) this.held.add('brake');
+    this.held.delete('boost');
+    if (hardCorner && me.brakeCharge > 0.35) {
+      this.held.add('brake');
+    } else if (off < 0.3 && me.burnerCharge > 0.5) {
+      const run = rescue ? distance(me.x, me.y, rescue.x, rescue.y)
+        : (strayed && lead ? distance(me.x, me.y, lead.x, lead.y) : 0);
+      if (run > 320) this.held.add('boost');
+    }
 
     return this;
   }

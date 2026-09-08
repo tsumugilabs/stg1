@@ -83,8 +83,10 @@
       height: 26px;
       align-items: center;
       justify-content: center;
-      padding: 0 10px;
-      font-size: 11px;
+      padding: 0 8px;
+      /* The hint has to fit one line on the narrowest phone, so it scales
+         with the viewport rather than overflowing it. */
+      font-size: clamp(8px, 2.2vw, 11px);
       /* One line, always: a wrapped footer would push the page into scrolling. */
       white-space: nowrap;
       flex-wrap: nowrap;
@@ -106,13 +108,14 @@
     <span><b>&#8592;&#8593;&#8595;&#8594; / WASD</b> turn</span>
     <span><b>SPACE / Z</b> fire</span>
     <span><b>SHIFT / C</b> air brake</span>
+    <span><b>V / K</b> afterburner</span>
     <span><b>ENTER</b> start</span>
     <span><b>P</b> pause</span>
     <span><b>M</b> mute</span>
     <span class="hint">画面をクリックしてからキー操作</span>
   </footer>
   <footer class="touch">
-    <span>スティックで旋回 ・ <b>FIRE</b> 射撃 ・ <b>BRAKE</b> 急旋回</span>
+    <span>スティック旋回 ・ <b>FIRE</b> 射撃 ・ <b>BRAKE</b> 急旋回 ・ <b>BOOST</b> 加速</span>
     <span class="rotate">横向き推奨</span>
   </footer>
   <noscript>This game requires JavaScript.</noscript>
