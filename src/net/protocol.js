@@ -16,6 +16,7 @@ export const PICK = 'pk';       // { t, craft }
 export const READY = 'rd';      // { t, on }
 export const INPUT = 'in';      // { t, n, d: [x, y] | null, h: bitmask }
 export const LEAVE = 'by';      // { t }
+export const WANT_ON = 'wc';    // { t } — put a coin in, from any seat
 
 /** Host to guest. */
 export const SEAT = 'st';       // { t, seat, size, name }

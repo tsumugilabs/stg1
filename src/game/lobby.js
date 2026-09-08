@@ -146,6 +146,24 @@ function chip(ctx, box, label, { on = false, dim = false, accent = '#7cf5ff' } =
     Math.round(box.h * 0.4), on ? accent : (dim ? '#66809c' : UI_DIM));
 }
 
+/**
+ * The boxes for whichever face is on screen.
+ *
+ * The stored ones are what the update pass hit-tested against, and are used
+ * when they belong to this face. They will not when the face has just changed:
+ * joining a room flips the stage from an async callback, so a frame can be
+ * drawn between the flip and the next update — which crashed on a room screen
+ * still holding a connecting screen's boxes. Computing the same pure function
+ * again with the same arguments gives the same boxes, so this cannot drift.
+ */
+function boxesFor(game, stage, w, h) {
+  if (game.lobbyBoxes && game.lobbyStage === stage) return game.lobbyBoxes;
+  if (stage === 'menu') return menuLayout(w, h);
+  if (stage === 'code') return codeLayout(w, h);
+  if (stage === 'room') return roomLayout(w, h);
+  return { back: { x: w / 2 - 70, y: h * 0.42 + 70, w: 140, h: 40, id: 'back' } };
+}
+
 export function drawLobby(ctx, game, cam) {
   const { width: w, height: h } = cam;
   ctx.globalAlpha = 0.78;
@@ -157,7 +175,7 @@ export function drawLobby(ctx, game, cam) {
   const stage = game.netStage;
 
   if (stage === 'menu') {
-    const layout = game.lobbyBoxes;
+    const layout = boxesFor(game, stage, w, h);
     uiText(ctx, 'ONLINE SQUADRON', w / 2, h * 0.17, title, '#ffd166');
     uiText(ctx, '仲間と同じ空を飛ぶ', w / 2, h * 0.22, 14, UI_DIM);
     uiText(ctx, 'ホストするとき、どちらで開くか', w / 2, h * 0.27 - 14, 12, UI_DIM);
@@ -177,7 +195,7 @@ export function drawLobby(ctx, game, cam) {
   }
 
   if (stage === 'code') {
-    const layout = game.lobbyBoxes;
+    const layout = boxesFor(game, stage, w, h);
     uiText(ctx, 'ルームコード', w / 2, h * 0.16, Math.min(title, h * 0.09), '#ffd166');
     const typed = (game.netCode + '____').slice(0, 4).split('').join('  ');
     uiText(ctx, typed, w / 2, h * 0.34, Math.min(52, w / 14, h * 0.18), UI_INK);
@@ -199,12 +217,12 @@ export function drawLobby(ctx, game, cam) {
     if (stage === 'error' && game.netError) {
       wrapped(ctx, game.netError, w / 2, h * 0.42 + 34, Math.min(w * 0.82, 620), 15, UI_DIM);
     }
-    if (stage === 'error') chip(ctx, game.lobbyBoxes.back, 'もどる');
+    if (stage === 'error') chip(ctx, boxesFor(game, stage, w, h).back, 'もどる');
     return;
   }
 
   // --- the room itself ----------------------------------------------------
-  const layout = game.lobbyBoxes;
+  const layout = boxesFor(game, stage, w, h);
   const room = game.room;
   const online = game.netWay === 'online';
   const kind = room && room.isHost

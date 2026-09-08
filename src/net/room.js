@@ -1,6 +1,6 @@
 import {
   CLOSED, HELLO, INPUT, LEAVE, LOBBY, PICK, READY, SEAT, SNAPSHOT, START,
-  packDirection, packHeld,
+  WANT_ON, packDirection, packHeld,
 } from './protocol.js';
 import { RemoteController } from './remote.js';
 import { encode, Interpolator } from './snapshot.js';
@@ -101,7 +101,7 @@ export class Room {
     if (!this.isHost) return;
     const peer = {
       transport, seat: -1, name: 'PILOT', craft: null, ready: false,
-      controller: null, silence: 0,
+      controller: null, silence: 0, wantsOn: false,
     };
     transport.onMessage((message) => this.fromPeer(peer, message));
     transport.onClose(() => this.dropPeer(peer));
@@ -144,6 +144,11 @@ export class Room {
       case INPUT:
         if (peer.controller) peer.controller.accept(message);
         peer.silence = 0;
+        break;
+      case WANT_ON:
+        // Anybody can put the coin in. Waiting on the host specifically would
+        // leave three people watching a fourth decide.
+        peer.wantsOn = true;
         break;
       case LEAVE:
         this.dropPeer(peer);
@@ -201,6 +206,20 @@ export class Room {
   announceStart(craftBySeat) {
     if (!this.isHost) return;
     this.broadcast({ t: START, size: this.size, craft: craftBySeat });
+  }
+
+  /** True if any connected pilot has asked to carry on. */
+  get anyWantsOn() {
+    return this.peers.some((peer) => peer.wantsOn);
+  }
+
+  clearWantsOn() {
+    for (const peer of this.peers) peer.wantsOn = false;
+  }
+
+  /** Guest: ask the host to carry on. */
+  sendWantsOn() {
+    if (this.link) this.link.send({ t: WANT_ON });
   }
 
   /** The controller for a seat, or null when the AI should take it. */
