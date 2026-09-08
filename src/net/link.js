@@ -134,7 +134,9 @@ export function describePeerError(error) {
   const type = String((error && error.type) || '');
   switch (type) {
     case 'peer-unavailable':
-      return 'そのルームは見つかりません。コードを確認するか、ホストに開き直してもらってください';
+      // Named explicitly, because it is the trap: a host who opened the room
+      // on "same device" is invisible to everyone but their own browser.
+      return 'そのコードのルームがありません。コードと、ホストが「オンライン」で開いているかを確認してください';
     case 'unavailable-id':
       return 'そのルームコードは使われています。もう一度ホストしてください';
     case 'network':

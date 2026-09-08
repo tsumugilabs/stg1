@@ -33,6 +33,7 @@ const HIGH_SCORE_KEY = 'chronopilot.highscore';
 const CRAFT_KEY = 'chronopilot.craft';
 const MODE_KEY = 'chronopilot.mode';
 const SQUAD_KEY = 'chronopilot.squadsize';
+const NETWAY_KEY = 'chronopilot.netway';
 const LOCKER_KEY = 'chronopilot.locker';
 const LOADOUT_KEY = 'chronopilot.loadout';
 const LOCKER_LIMIT = 60;
@@ -184,7 +185,10 @@ export class Game {
     this.room = null;
     this.netHandle = null;
     this.netStage = 'menu';
-    this.netWay = 'tabs';
+    // Remembered. Resetting this to the same-device default on every page
+    // load is how a host ends up opening a room only their own browser can
+    // see, while their friend asks the broker for a code nobody registered.
+    this.netWay = readStored(NETWAY_KEY, 'tabs') === 'online' ? 'online' : 'tabs';
     this.netCode = '';
     this.netError = '';
     this.netReady = false;
@@ -907,6 +911,11 @@ export class Game {
     room.sendPick(this.baseCraft.id);
   }
 
+  setNetWay(way) {
+    this.netWay = way;
+    writeStored(NETWAY_KEY, way);
+  }
+
   openLobby() {
     this.leaveRoom();
     this.netStage = 'menu';
@@ -951,34 +960,91 @@ export class Game {
     this.netStage = 'room';
   }
 
+  /**
+   * One attempt at joining, over one transport.
+   *
+   * A room that answers with a seat is a room that works, so that is the test
+   * — nothing else about a transport tells you whether the host is on the
+   * other end of it. Whatever does not answer in time is closed and forgotten.
+   */
+  tryJoin(makeTransport, timeout) {
+    return new Promise((resolve) => {
+      let transport;
+      try {
+        transport = makeTransport();
+      } catch {
+        resolve(null);
+        return;
+      }
+      const room = new Room({ host: false, name: `P${Math.ceil(Math.random() * 9)}` });
+      // 'pending' -> 'adopted' or 'discarded'. An attempt that lost the race is
+      // closed, and closing it fires its own disconnect handler: without
+      // knowing it was discarded, that handler would put an error on the
+      // screen of the session that actually won.
+      let outcome = '';
+      const finish = (value) => {
+        if (outcome) return;
+        outcome = value ? 'adopted' : 'discarded';
+        clearTimeout(timer);
+        if (!value) transport.close();
+        resolve(value);
+      };
+      const timer = setTimeout(() => finish(null), timeout);
+      room.on('seat', () => finish(room));
+      room.on('closed', (why) => {
+        if (outcome !== 'adopted') {
+          finish(null);
+          return;
+        }
+        this.netError = why || '接続が切れました';
+        this.netStage = 'error';
+        this.replica = false;
+        if (this.state === 'playing') this.state = 'lobby';
+      });
+      // Attached before connecting: the host can send START the moment it sees
+      // the seat, and a handler added afterwards would miss it.
+      room.on('start', (message) => this.beginAsGuest(message));
+      room.connect(transport);
+    });
+  }
+
+  /**
+   * Joins whichever way the host actually opened the room.
+   *
+   * The person joining is not asked how — they cannot know, and making both
+   * sides pick the same thing independently is what broke this: the choice
+   * reset to "same device" on every page load, so a host could open a room
+   * only their own browser could see while their friend asked the broker for
+   * a code nobody had registered. The same-device channel is tried first
+   * because it is free and answers instantly when it is the right one.
+   */
   async startJoining() {
     this.netStage = 'connecting';
-    const room = new Room({ host: false, name: `P${Math.ceil(Math.random() * 9)}` });
-    room.on('closed', (why) => {
-      this.netError = why || '接続が切れました';
-      this.netStage = 'error';
-      this.replica = false;
-      if (this.state === 'playing') this.state = 'lobby';
-    });
-    room.on('start', (message) => this.beginAsGuest(message));
-    let transport;
-    try {
-      transport = this.netWay === 'online'
-        ? await joinOnline(this.netCode, (status) => {
+    this.netError = '';
+
+    this.netStatus = '同じ端末をさがしています...';
+    let room = await this.tryJoin(() => joinOverTabs(this.netCode), 900);
+
+    if (!room) {
+      this.netStatus = 'オンラインでさがしています...';
+      try {
+        const transport = await joinOnline(this.netCode, (status) => {
           this.netStatus = status.startsWith('retry')
             ? `もう一度試しています (${status.slice(6)}/3)`
-            : '';
-        })
-        : joinOverTabs(this.netCode);
-    } catch (error) {
-      this.netError = error.message;
-      this.netStatus = '';
-      this.netStage = 'error';
-      return;
+            : 'オンラインでさがしています...';
+        });
+        room = await this.tryJoin(() => transport, 6000);
+        if (!room) throw new Error('ルームには届きましたが、返事がありませんでした');
+      } catch (error) {
+        this.netError = error.message;
+        this.netStatus = '';
+        this.netStage = 'error';
+        return;
+      }
     }
+
     this.netStatus = '';
     this.room = room;
-    room.connect(transport);
     this.mode = 'squadron';
     this.netStage = 'room';
     // Tell the host what this seat is flying, so the room shows it.
@@ -1044,7 +1110,7 @@ export class Game {
       if (this.input.wasPressed('start')) pressed = 'host';
       else if (this.input.wasPressed('fire')) pressed = 'join';
       else if (this.input.wasPressed('left') || this.input.wasPressed('right')) {
-        this.netWay = this.netWay === 'tabs' ? 'online' : 'tabs';
+        this.setNetWay(this.netWay === 'tabs' ? 'online' : 'tabs');
         this.sfx.hit();
       }
     }
@@ -1094,8 +1160,8 @@ export class Game {
       return;
     }
     if (stage === 'menu') {
-      if (id === 'way-tabs') { this.netWay = 'tabs'; return; }
-      if (id === 'way-online') { this.netWay = 'online'; return; }
+      if (id === 'way-tabs') { this.setNetWay('tabs'); return; }
+      if (id === 'way-online') { this.setNetWay('online'); return; }
       if (id === 'host') { this.startHosting(); return; }
       if (id === 'join') { this.netCode = ''; this.netStage = 'code'; return; }
     }
