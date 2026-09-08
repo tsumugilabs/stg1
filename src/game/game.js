@@ -360,18 +360,30 @@ export class Game {
    * is left. Score and rank are kept — the price is craft, not progress.
    */
   acceptContinue() {
+    /*
+     * One craft each, and never the last one.
+     *
+     * `lives` counts craft including the one being flown — losing one at a
+     * count of 1 is OUT, which is the rule ARCADE is balanced on and is not
+     * moving. Every craft in the game starts with two and nothing adds more,
+     * so a wiped flight is always sitting on exactly one: there is no craft
+     * left to take, and charging one anyway would put the whole flight out and
+     * make the coin worthless.
+     *
+     * So the price is taken where there is one to take, and otherwise the
+     * flight comes back on its last craft with no margin at all. Which is its
+     * own kind of price.
+     */
     for (const player of this.players) {
       if (player.out) continue;
-      player.lives -= 1;
-      // Below zero is out of pilots, not out of spares.
-      if (player.lives < 0) player.out = true;
-      else player.stranded = false;
+      player.lives = Math.max(1, player.lives - 1);
+      player.stranded = false;
     }
-    this.continues += 1;
     if (this.squadOut) {
       this.endRun();
       return;
     }
+    this.continues += 1;
     if (this.room && this.room.isHost) this.room.clearWantsOn();
     // startEra announces the era itself; the coin goes on the second line so
     // both are readable rather than one replacing the other.
@@ -393,7 +405,6 @@ export class Game {
       return;
     }
     if (this.input.wasPressed('pause') || this.continueTimer <= 0) this.endRun();
-    if (this.room && this.room.isHost) this.room.hostTick(dt, this);
   }
 
   /** A guest's side of the same screen: ask, and wait to be told. */
@@ -1044,6 +1055,12 @@ export class Game {
       default: break;
     }
 
+    // Every frame, whatever screen is up. Tying this to the playing state meant
+    // a run that ended between two snapshots never told anybody: the host sat
+    // on GAME OVER while three guests waited on a continue screen for ever.
+    if (this.room && this.room.isHost) this.room.hostTick(dt, this);
+    if (this.room && !this.room.isHost) this.room.guestTick(dt);
+
     this.updateCamera();
   }
 
@@ -1380,8 +1397,12 @@ export class Game {
     }
 
     if (pressed) this.lobbyAction(pressed);
-    if (this.room && !this.room.isHost && this.room.started && this.state === 'lobby') {
-      // The start message can land while this screen is still up.
+    if (this.room && !this.room.isHost && this.room.started && !this.room.closed
+      && this.netStage === 'room' && this.state === 'lobby') {
+      // The start message can land while this screen is still up. Only while
+      // the room is actually alive, though: without the closed check a guest
+      // whose host had vanished was thrown back into the flight every frame,
+      // so the message saying the connection had gone never stayed on screen.
       this.state = 'playing';
     }
   }
@@ -1762,7 +1783,6 @@ export class Game {
     this.updateSpawning(dt);
     this.resolveCollisions();
     this.effects.update(dt);
-    if (this.room && this.room.isHost) this.room.hostTick(dt, this);
   }
 
   /**
@@ -1789,7 +1809,26 @@ export class Game {
     players.forEach((state, i) => {
       const player = this.players[i];
       if (!player) return;
-      if (state.craftId && player.craft.id !== state.craftId) player.setCraft(state.craftId);
+      // Fitted state first: everything below, the local prediction included,
+      // reads its numbers off the craft this leaves behind.
+      if (state.craftId && player.baseId !== state.craftId) {
+        player.baseId = state.craftId;
+        player.setCraft(state.craftId);
+        player.modules = [];
+      }
+      if (state.modules.join() !== player.modules.join()) {
+        player.modules = [...state.modules];
+        player.applyCraft(resolveCraft(craftById(player.baseId), [], player.modules));
+      }
+      // Pods are placed by logic only the host runs.
+      player.syncPods();
+      for (let p = 0; p < player.pods.length; p += 1) {
+        const at = p * 3;
+        if (state.pods.length <= at + 2) break;
+        player.pods[p].x = state.pods[at];
+        player.pods[p].y = state.pods[at + 1];
+        player.pods[p].angle = state.pods[at + 2];
+      }
       player.hp = state.hp;
       player.maxHp = player.craft.hp;
       player.lives = state.lives;

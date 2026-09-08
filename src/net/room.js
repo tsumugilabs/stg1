@@ -47,6 +47,7 @@ export class Room {
     this.link = null;
     this.interp = new Interpolator();
     this.inputSeq = 0;
+    this.quiet = 0;
     this.listeners = {};
     if (host) this.resetSlots();
   }
@@ -253,6 +254,18 @@ export class Room {
 
   // --- guest --------------------------------------------------------------
 
+  /**
+   * A guest's frame. A host that simply vanishes — a closed tab, a phone that
+   * went to sleep — sends no goodbye, so silence is the only signal there is.
+   */
+  guestTick(dt) {
+    if (this.isHost || this.closed || !this.started) return;
+    this.quiet += dt;
+    if (this.quiet <= TIMEOUT) return;
+    this.closed = true;
+    this.emit('closed', 'ホストとの接続が切れました');
+  }
+
   connect(transport) {
     this.link = transport;
     transport.onMessage((message) => this.fromHost(message));
@@ -282,6 +295,7 @@ export class Room {
         this.emit('start', message);
         break;
       case SNAPSHOT:
+        this.quiet = 0;
         this.interp.push(message);
         break;
       case CLOSED:
