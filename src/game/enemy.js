@@ -7,7 +7,7 @@ import { drawEnemy } from '../render/sprites.js';
  * whole game is built on.
  */
 export class Enemy {
-  constructor({ x, y, angle, era, difficulty = 1 }) {
+  constructor({ x, y, angle, era, difficulty = 1, toughness = 1 }) {
     this.x = x;
     this.y = y;
     this.angle = angle;
@@ -21,11 +21,26 @@ export class Enemy {
     this.wobblePhase = randRange(0, Math.PI * 2);
     this.wobbleRate = randRange(1.2, 2.4);
     this.score = 300;
+    // On the first lap an escort dies to one round, which is the arcade feel
+    // the whole game was tuned around. Later laps add armour rather than
+    // numbers: the sky stays readable and the fights get longer.
+    this.maxHp = toughness;
+    this.hp = toughness;
+    this.hitFlash = 0;
     this.dead = false;
     this.isEscort = false;
   }
 
+  /** Takes damage from gunfire. Returns true if that finished it. */
+  hit(damage = 1) {
+    this.hp -= damage;
+    this.hitFlash = 0.09;
+    if (this.hp <= 0) this.dead = true;
+    return this.dead;
+  }
+
   update(dt, game) {
+    if (this.hitFlash > 0) this.hitFlash -= dt;
     const player = game.nearestPlayer(this.x, this.y);
     const toPlayer = Math.atan2(player.y - this.y, player.x - this.x);
     this.wobblePhase += this.wobbleRate * dt;
@@ -64,6 +79,16 @@ export class Enemy {
     ctx.rotate(this.angle);
     ctx.scale(1.25, 1.25);
     drawEnemy(ctx, this.kind, this.era.colors, time + this.wobblePhase);
+    if (this.hitFlash > 0) {
+      // Same trick the player craft uses: the airframe painted over itself in
+      // one flat colour, additively, so a hit that did not kill still reads.
+      ctx.globalAlpha = Math.min(0.8, this.hitFlash * 8);
+      ctx.globalCompositeOperation = 'lighter';
+      drawEnemy(ctx, this.kind, {
+        body: '#ff6b6b', wing: '#ff6b6b', wingAlt: '#ff6b6b',
+        glass: '#ff6b6b', accent: '#ff6b6b',
+      }, time + this.wobblePhase);
+    }
     ctx.restore();
   }
 }

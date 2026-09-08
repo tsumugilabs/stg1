@@ -244,6 +244,20 @@ function brakeGauge(ctx, game, x, y) {
   ctx.fillRect(x + half + 6, y, half * clamp(player.burnerCharge, 0, 1), 5);
 }
 
+/**
+ * The flight's rank and how close it is to the next one. Only in SQUADRON,
+ * and only from the second lap: on the first there is nothing to show.
+ */
+function rankGauge(ctx, game, x, y) {
+  if (!game.ranked) return;
+  const width = 15 * 5 + 3 * 4;
+  label(ctx, `RANK ${game.squadRank}`, x, y - 7, { size: 10, color: '#ffd166' });
+  ctx.fillStyle = '#22344a';
+  ctx.fillRect(x, y, width, 4);
+  ctx.fillStyle = '#ffd166';
+  ctx.fillRect(x, y, width * clamp(game.rankKills / Math.max(game.rankTarget, 1), 0, 1), 4);
+}
+
 /** Armour remaining on the current craft, as one pip per point. */
 function armourGauge(ctx, game, x, y) {
   const player = game.player;
@@ -299,7 +313,14 @@ export function drawHud(ctx, game, cam) {
   // On a narrow view (a phone held upright) the subtitle would run into the hi-score.
   label(ctx, w < 760 ? era.label : `${era.label}  ${era.subtitle}`, w - 16, 27,
     { size: 15, color: DIM, align: 'right' });
+  // Which lap, and therefore how many hits everything is taking. Only shown
+  // once it stops being one, so the first lap carries no extra furniture.
+  if (game.lap > 1) {
+    label(ctx, `LAP ${game.lap}  x${game.toughness}`, w - 16, 44,
+      { size: 12, color: '#ff9f9f', align: 'right' });
+  }
 
+  rankGauge(ctx, game, 18, h - 92);
   armourGauge(ctx, game, 18, h - 46);
   brakeGauge(ctx, game, 18, h - 18);
   // The pause button lives in that corner on a touch layout, so the flight

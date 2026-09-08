@@ -63,6 +63,11 @@ export class Player {
     this.downTimer = 0;
     this.out = false;
     this.chute = null;
+    // The airframe this seat started in. Modules are always resolved from
+    // here, never from the craft as it currently stands, or a rank would
+    // compound on the last one.
+    this.baseId = typeof craftId === 'string' ? craftId : craftId.id;
+    this.modules = [];
     this.setCraft(craftId);
     this.reset(0, 0);
   }

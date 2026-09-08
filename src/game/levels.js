@@ -176,3 +176,13 @@ export function cycleAt(index) {
 export function difficultyAt(index) {
   return 1 + cycleAt(index) * CYCLE_DIFFICULTY_STEP;
 }
+
+/**
+ * How many hits everything takes on this lap: one on the first, two on the
+ * second, three on the third. Kept separate from `difficultyAt`, which is a
+ * gentle 28%-a-lap nudge to speed and reach — armour is the loud lever and it
+ * deserves its own, obvious number.
+ */
+export function toughnessAt(index) {
+  return cycleAt(index) + 1;
+}
