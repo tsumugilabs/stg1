@@ -27,6 +27,7 @@ export function encode(game) {
     t: 'sn',
     c: game.netClock,
     st: game.state,
+    ct: Math.round(game.continueTimer * 10) / 10,
     e: game.eraIndex,
     k: game.kills,
     q: game.quota,

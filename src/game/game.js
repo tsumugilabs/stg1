@@ -78,6 +78,8 @@ const BULLET_RANGE = 1600;
  * and correcting inside it is what made the controls feel heavy.
  */
 const PREDICTION_SLACK = 26;
+/** How long the flight has to decide whether to put another coin in. */
+const CONTINUE_SECONDS = 10;
 
 /*
  * Squadron ranks, from the second lap onwards.
@@ -201,6 +203,7 @@ export class Game {
     this.netReady = false;
     this.netClock = 0;
     this.lobbyBoxes = null;
+    this.lobbyStage = '';
     // True while the craft cards were opened from a room rather than from the
     // mode screen, so confirming goes back instead of launching.
     this.fromLobby = false;
@@ -213,6 +216,8 @@ export class Game {
     this.netEvents = [];
     this.netPlayed = -1;
     this.netEye = null;
+    this.continueTimer = 0;
+    this.continues = 0;
     this.loadoutBoxes = null;
     this.loadoutPane = 'slots';
     this.slotIndex = 0;
@@ -322,6 +327,81 @@ export class Game {
    */
   get squadStuck() {
     return this.players.every((p) => p.out || p.stranded);
+  }
+
+  /**
+   * Whether another coin would buy anything: somebody has to still be a pilot.
+   *
+   * `lives` counts spare craft, not craft — a pilot at zero spares is flying
+   * their last one, and only becomes OUT when they next need replacing. So
+   * anybody who is merely stranded can pay and fly on, and a flight is past
+   * saving exactly when every seat is already OUT.
+   */
+  get canContinue() {
+    return this.squadron && this.players.some((p) => !p.out);
+  }
+
+  offerContinue() {
+    this.state = 'continue';
+    this.continueTimer = CONTINUE_SECONDS;
+    if (this.room && this.room.isHost) this.room.clearWantsOn();
+    this.sfx.gameOver();
+  }
+
+  endRun() {
+    this.state = 'gameover';
+    this.stateTimer = 1.0;
+    this.sfx.gameOver();
+  }
+
+  /**
+   * The coin goes in. Everybody still holding a craft pays one, whoever that
+   * empties is out for good, and the era starts over from the top for whoever
+   * is left. Score and rank are kept — the price is craft, not progress.
+   */
+  acceptContinue() {
+    for (const player of this.players) {
+      if (player.out) continue;
+      player.lives -= 1;
+      // Below zero is out of pilots, not out of spares.
+      if (player.lives < 0) player.out = true;
+      else player.stranded = false;
+    }
+    this.continues += 1;
+    if (this.squadOut) {
+      this.endRun();
+      return;
+    }
+    if (this.room && this.room.isHost) this.room.clearWantsOn();
+    // startEra announces the era itself; the coin goes on the second line so
+    // both are readable rather than one replacing the other.
+    this.startEra();
+    this.emit('loot', 0, 0, `CONTINUE ${this.continues} ・ 全機が残機を1つ支払いました`);
+  }
+
+  updateContinue(dt) {
+    this.effects.update(dt);
+    this.continueTimer -= dt;
+    // A moment to read the screen. Without it, anybody who happened to be
+    // firing at the instant the flight went down spends a craft before they
+    // have seen what they were asked.
+    if (this.continueTimer > CONTINUE_SECONDS - 0.7) return;
+    const asked = this.input.wantsStart()
+      || (this.room && this.room.isHost && this.room.anyWantsOn);
+    if (asked) {
+      this.acceptContinue();
+      return;
+    }
+    if (this.input.wasPressed('pause') || this.continueTimer <= 0) this.endRun();
+    if (this.room && this.room.isHost) this.room.hostTick(dt, this);
+  }
+
+  /** A guest's side of the same screen: ask, and wait to be told. */
+  updateGuestContinue(dt) {
+    this.updateReplica(dt);
+    if (this.continueTimer > 0) this.continueTimer -= dt;
+    if (this.continueTimer > CONTINUE_SECONDS - 0.7) return;
+    if (this.input.wantsStart() && this.room) this.room.sendWantsOn();
   }
 
   /** The craft the camera follows and the controls drive. */
@@ -509,6 +589,8 @@ export class Game {
     this.rescueChain = 0;
     this.squadRank = 1;
     this.rankKills = 0;
+    this.continues = 0;
+    this.continueTimer = 0;
     for (const player of this.players) player.modules = [];
     this.startEra();
   }
@@ -951,6 +1033,10 @@ export class Game {
         if (this.replica) this.updateReplica(dt);
         else this.updateEraClear(dt);
         break;
+      case 'continue':
+        if (this.replica) this.updateGuestContinue(dt);
+        else this.updateContinue(dt);
+        break;
       case 'gameover':
         if (this.replica) this.updateGuestOver(dt);
         else this.updateGameOver(dt);
@@ -1242,6 +1328,9 @@ export class Game {
     this.driftAttract(dt);
     const { width: w, height: h } = this.cam;
     const stage = this.netStage;
+    // Remembered alongside the boxes so the renderer can tell whether they
+    // still belong to the face it is about to draw.
+    this.lobbyStage = stage;
     this.lobbyBoxes = stage === 'menu' ? menuLayout(w, h)
       : stage === 'code' ? codeLayout(w, h)
         : stage === 'room' ? roomLayout(w, h)
@@ -1769,9 +1858,10 @@ export class Game {
     this.playEvents(snap);
     this.netEye = snap.w ? { x: snap.w[0], y: snap.w[1] } : null;
     // The host's screen state carries the between-era and end-of-run messages.
-    if (snap.st !== this.state && ['playing', 'eraclear', 'gameover'].includes(snap.st)) {
+    if (snap.st !== this.state && ['playing', 'eraclear', 'gameover', 'continue'].includes(snap.st)) {
       this.state = snap.st;
     }
+    if (snap.ct !== undefined) this.continueTimer = snap.ct;
 
     const era = this.era;
     const seen = new Set();
@@ -1863,9 +1953,8 @@ export class Game {
     }
 
     if ((this.squadOut || this.squadStuck) && this.state === 'playing') {
-      this.state = 'gameover';
-      this.stateTimer = 1.0;
-      this.sfx.gameOver();
+      if (this.canContinue) this.offerContinue();
+      else this.endRun();
     }
   }
 

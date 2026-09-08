@@ -379,8 +379,10 @@ export function drawHud(ctx, game, cam) {
 
   // Hanging under your own silk. The stick still nudges the chute, so this
   // says so — a downed player with nothing to do is a player watching.
-  // Shot down and nobody came. The era carries on without them.
-  if (game.player.stranded) {
+  // Shot down and nobody came. The era carries on without them. Only while
+  // the era is actually running: on the continue screen this was being drawn
+  // straight through the question being asked.
+  if (game.player.stranded && game.state === 'playing') {
     label(ctx, 'MISSING IN ACTION', w / 2, h / 2 - 74, {
       size: Math.max(20, Math.min(34, w / 26)), color: '#ff8f8f', align: 'center',
     });
@@ -391,7 +393,7 @@ export function drawHud(ctx, game, cam) {
       { size: Math.max(11, Math.min(14, w / 60)), color: '#7cf5ff', align: 'center' });
   }
 
-  if (game.player.downed) {
+  if (game.player.downed && game.state === 'playing') {
     const left = Math.max(0, game.player.chute.timer);
     const urgent = left < 4;
     label(ctx, `BAIL OUT  ${left.toFixed(1)}`, w / 2, h / 2 - 74, {
@@ -431,6 +433,30 @@ export function drawHud(ctx, game, cam) {
         { text: `NEXT ERA  ${game.nextEraLabel}`, size: 18, color: DIM },
       ]);
       break;
+    case 'continue': {
+      const left = Math.max(0, Math.ceil(game.continueTimer));
+      const urgent = left <= 3;
+      const mid = h / 2;
+      panel(ctx, w / 2 - Math.min(w * 0.45, 380), mid - 112, Math.min(w * 0.9, 760), 232, 0.72);
+      label(ctx, 'CONTINUE?', w / 2, mid - 62,
+        { size: Math.min(44, w / 17), color: urgent ? '#ff8f8f' : '#ffd166', align: 'center' });
+      label(ctx, '編隊全滅', w / 2, mid - 32,
+        { size: Math.min(15, w / 46), color: DIM, align: 'center' });
+      label(ctx, '続けると全員が残機を1つ失い、この面を最初からやり直します', w / 2, mid - 10,
+        { size: Math.min(15, w / 46), color: INK, align: 'center' });
+      // Who is about to pay, and who is buying their last aircraft with it.
+      const rows = game.players.filter((p) => !p.out);
+      const last = rows.filter((p) => p.lives <= 1).length;
+      label(ctx, last
+        ? `${rows.length}機が支払います (うち${last}機はこれが最後の1機に)`
+        : `${rows.length}機が支払います`,
+      w / 2, mid + 12, { size: 13, color: DIM, align: 'center' });
+      label(ctx, `${left}`, w / 2, mid + 66,
+        { size: Math.min(46, w / 16), color: urgent ? '#ff5a5a' : INK, align: 'center' });
+      label(ctx, game.touchMode ? 'タップで続行 ・ 一時停止ボタンでやめる' : 'ENTER で続行 ・ P でやめる',
+        w / 2, mid + 96, { size: Math.min(16, w / 44), color: INK, align: 'center' });
+      break;
+    }
     case 'gameover':
       centeredMessage(ctx, cam, [
         { text: 'GAME OVER', size: 42, color: '#ff8f8f' },
