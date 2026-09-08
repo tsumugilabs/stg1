@@ -122,64 +122,185 @@ export function joinOverTabs(code) {
  * Host over PeerJS. Resolves once the broker has accepted the room id, which
  * is also the moment the code becomes worth showing to anybody.
  */
+/**
+ * What actually went wrong, in words a player can act on.
+ *
+ * Every failure used to come back as "room not found", which is the one
+ * message that is useless: a broker outage, a blocked network, a browser that
+ * cannot do WebRTC and a genuinely mistyped code all read the same, so neither
+ * the player nor anybody helping them can tell which it was.
+ */
+export function describePeerError(error) {
+  const type = String((error && error.type) || '');
+  switch (type) {
+    case 'peer-unavailable':
+      return 'そのルームは見つかりません。コードを確認するか、ホストに開き直してもらってください';
+    case 'unavailable-id':
+      return 'そのルームコードは使われています。もう一度ホストしてください';
+    case 'network':
+      return '接続サーバーに届きません。回線を確認して、少し待ってからやり直してください';
+    case 'server-error':
+      return '接続サーバーが応答しません。少し待ってからやり直してください';
+    case 'socket-error':
+    case 'socket-closed':
+      return '接続サーバーとの通信が切れました。もう一度お試しください';
+    case 'browser-incompatible':
+      return 'このブラウザはオンライン対戦に対応していません';
+    case 'webrtc':
+    case 'disconnected':
+      return '相手と直接つなげませんでした。回線によっては塞がれていることがあります';
+    case 'ssl-unavailable':
+      return '安全な接続を確立できませんでした';
+    default:
+      return type ? `接続に失敗しました (${type})` : '接続に失敗しました';
+  }
+}
+
+const RECONNECT_DELAYS = [400, 1000, 2500, 5000];
+
+/**
+ * Keeps a peer's link to the broker alive.
+ *
+ * PeerJS drops its signalling connection on any network hiccup and after a
+ * spell of sitting idle, and it does not come back on its own. A host that has
+ * been disconnected is no longer discoverable, so the room simply stops
+ * existing while its screen still shows the code — which is exactly what a
+ * host reading their code out loud to a friend is doing when it happens.
+ */
+function keepAlive(peer, onStatus) {
+  let attempt = 0;
+  let closed = false;
+  peer.on('disconnected', () => {
+    if (closed || peer.destroyed) return;
+    onStatus('reconnecting');
+    const delay = RECONNECT_DELAYS[Math.min(attempt, RECONNECT_DELAYS.length - 1)];
+    attempt += 1;
+    setTimeout(() => {
+      if (closed || peer.destroyed) return;
+      try {
+        peer.reconnect();
+      } catch {
+        onStatus('lost');
+      }
+    }, delay);
+  });
+  peer.on('open', () => {
+    attempt = 0;
+    onStatus('open');
+  });
+  peer.on('close', () => onStatus('lost'));
+  return () => { closed = true; };
+}
+
+/**
+ * Host over PeerJS. Resolves once the broker has accepted the room id, which
+ * is also the moment the code becomes worth showing to anybody.
+ */
 export async function hostOnline(code, onTransport) {
   await loadSignalling();
   return new Promise((resolve, reject) => {
     const peer = new window.Peer(PEER_PREFIX + code);
     let settled = false;
+    const handle = {
+      kind: 'online',
+      code,
+      status: 'connecting',
+      error: '',
+      peer,
+      close() {
+        handle.stop();
+        try {
+          peer.destroy();
+        } catch {
+          /* already gone */
+        }
+      },
+    };
+    handle.stop = keepAlive(peer, (status) => {
+      handle.status = status;
+      if (status === 'open') handle.error = '';
+    });
     peer.on('open', () => {
+      if (settled) return;
       settled = true;
-      resolve({
-        kind: 'online',
-        code,
-        close() {
-          try {
-            peer.destroy();
-          } catch {
-            /* already gone */
-          }
-        },
-      });
+      handle.status = 'open';
+      resolve(handle);
     });
     peer.on('connection', (connection) => onTransport(new PeerTransport(connection)));
     peer.on('error', (error) => {
-      if (settled) return;
-      settled = true;
-      // The one error worth translating: somebody already has this code.
-      reject(new Error(String(error && error.type) === 'unavailable-id'
-        ? 'そのルームコードは使われています'
-        : 'ホストを開始できませんでした'));
+      const message = describePeerError(error);
+      if (!settled) {
+        settled = true;
+        reject(new Error(message));
+        return;
+      }
+      // After the room is up, an error is worth showing but not fatal: the
+      // reconnect above may well fix it, and dropping the room would throw
+      // away everybody already in it.
+      handle.error = message;
     });
   });
 }
 
-export async function joinOnline(code) {
+/** How many times a join is retried before it is called a miss. */
+const JOIN_ATTEMPTS = 3;
+const JOIN_TIMEOUT = 9000;
+
+/**
+ * Join a room. Retried a few times: a host that is mid-reconnect reports as
+ * "no such peer" for a second or two, and giving up on the first answer turns
+ * a hiccup into "that room does not exist".
+ */
+export async function joinOnline(code, onStatus = () => {}) {
   await loadSignalling();
+  let last = new Error('接続に失敗しました');
+  for (let attempt = 1; attempt <= JOIN_ATTEMPTS; attempt += 1) {
+    onStatus(attempt === 1 ? 'connecting' : `retry:${attempt}`);
+    try {
+      return await attemptJoin(code);
+    } catch (error) {
+      last = error;
+      // A code nobody is answering may still be a host coming back; anything
+      // else is not going to improve by asking again immediately.
+      if (!error.retryable || attempt === JOIN_ATTEMPTS) break;
+      await new Promise((r) => setTimeout(r, 900 * attempt));
+    }
+  }
+  throw last;
+}
+
+function attemptJoin(code) {
   return new Promise((resolve, reject) => {
     const peer = new window.Peer();
     let settled = false;
+    const fail = (error, retryable) => {
+      if (settled) return;
+      settled = true;
+      const wrapped = new Error(typeof error === 'string' ? error : describePeerError(error));
+      wrapped.retryable = retryable;
+      try {
+        peer.destroy();
+      } catch {
+        /* already gone */
+      }
+      reject(wrapped);
+    };
     peer.on('open', () => {
       const connection = peer.connect(PEER_PREFIX + code, { reliable: true });
       connection.on('open', () => {
+        if (settled) return;
         settled = true;
         resolve(new PeerTransport(connection));
       });
-      connection.on('error', () => {
-        if (settled) return;
-        settled = true;
-        reject(new Error('そのルームが見つかりません'));
-      });
+      connection.on('error', (error) => fail(error, true));
     });
-    peer.on('error', () => {
-      if (settled) return;
-      settled = true;
-      reject(new Error('そのルームが見つかりません'));
+    peer.on('error', (error) => {
+      const type = String((error && error.type) || '');
+      // Worth another go: the host may be reconnecting, or the broker may be
+      // briefly unhappy. A browser that cannot do WebRTC will never improve.
+      fail(error, type === 'peer-unavailable' || type === 'network'
+        || type === 'server-error' || type === 'socket-error');
     });
-    // A room that never answers is a room that is not there.
-    setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      reject(new Error('そのルームが見つかりません'));
-    }, 12000);
+    setTimeout(() => fail('ルームが応答しませんでした。ホストの画面が「待機中」になっているか確認してください', true), JOIN_TIMEOUT);
   });
 }

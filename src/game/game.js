@@ -193,6 +193,7 @@ export class Game {
     // True while the craft cards were opened from a room rather than from the
     // mode screen, so confirming goes back instead of launching.
     this.fromLobby = false;
+    this.netStatus = '';
     // A guest draws the host's world instead of simulating its own.
     this.replica = false;
     this.replicaEnemies = new Map();
@@ -913,6 +914,7 @@ export class Game {
     this.netCode = '';
     this.netReady = false;
     this.fromLobby = false;
+    this.netStatus = '';
     this.state = 'lobby';
     this.sfx.hit();
   }
@@ -962,13 +964,19 @@ export class Game {
     let transport;
     try {
       transport = this.netWay === 'online'
-        ? await joinOnline(this.netCode)
+        ? await joinOnline(this.netCode, (status) => {
+          this.netStatus = status.startsWith('retry')
+            ? `もう一度試しています (${status.slice(6)}/3)`
+            : '';
+        })
         : joinOverTabs(this.netCode);
     } catch (error) {
       this.netError = error.message;
+      this.netStatus = '';
       this.netStage = 'error';
       return;
     }
+    this.netStatus = '';
     this.room = room;
     room.connect(transport);
     this.mode = 'squadron';
@@ -1620,6 +1628,22 @@ export class Game {
     if (player.remote) return player.remote;
     const wingman = this.wingmen.find((w) => w.player === player);
     return wingman ? wingman.control(dt, this) : this.input;
+  }
+
+  /**
+   * Whether the room is actually open for business. A host whose link to the
+   * broker has dropped is no longer discoverable, so its code has quietly
+   * stopped working — and without this the screen goes on showing the code as
+   * if nothing were wrong, which is how "it worked, then nobody could join"
+   * happens.
+   */
+  get linkState() {
+    if (this.netWay !== 'online' || !this.netHandle) return 'open';
+    return this.netHandle.status || 'open';
+  }
+
+  get linkError() {
+    return (this.netHandle && this.netHandle.error) || '';
   }
 
   /** True while this machine is the one running the simulation for others. */
