@@ -199,7 +199,9 @@ function squadPanel(ctx, game, right, top) {
   for (const mate of game.players) {
     if (mate.local) continue;
     const down = !mate.flying;
-    const colour = mate.out ? '#5d7085' : (down ? '#ff8f8f' : mate.craft.colors.accent);
+    const colour = mate.out || mate.stranded
+      ? '#5d7085'
+      : (down ? '#ff8f8f' : mate.craft.colors.accent);
     label(ctx, `${mate.name} ${mate.craft.name}`, left, y, { size: 10, color: colour });
     const barY = y + 4;
     ctx.fillStyle = '#22344a';
@@ -209,6 +211,7 @@ function squadPanel(ctx, game, right, top) {
       ctx.fillRect(left, barY, width * clamp(mate.hp / Math.max(mate.maxHp, 1), 0, 1), 4);
     }
     if (mate.out) label(ctx, 'OUT', right - 22, y, { size: 10, color: '#ff8f8f' });
+    else if (mate.stranded) label(ctx, 'MIA', right - 20, y, { size: 10, color: '#ff8f8f' });
     else if (mate.downed) {
       const left = Math.max(0, mate.chute.timer);
       const blink = left < 4 && Math.floor(left * 4) % 2 === 0;
@@ -376,6 +379,18 @@ export function drawHud(ctx, game, cam) {
 
   // Hanging under your own silk. The stick still nudges the chute, so this
   // says so — a downed player with nothing to do is a player watching.
+  // Shot down and nobody came. The era carries on without them.
+  if (game.player.stranded) {
+    label(ctx, 'MISSING IN ACTION', w / 2, h / 2 - 74, {
+      size: Math.max(20, Math.min(34, w / 26)), color: '#ff8f8f', align: 'center',
+    });
+    label(ctx, game.boss ? '敵旗艦の視点 ・ 味方のクリアを待っています'
+      : '敵機の視点 ・ 味方のクリアを待っています',
+    w / 2, h / 2 - 48, { size: Math.max(11, Math.min(15, w / 56)), color: DIM, align: 'center' });
+    label(ctx, '次の面から復帰します', w / 2, h / 2 - 26,
+      { size: Math.max(11, Math.min(14, w / 60)), color: '#7cf5ff', align: 'center' });
+  }
+
   if (game.player.downed) {
     const left = Math.max(0, game.player.chute.timer);
     const urgent = left < 4;

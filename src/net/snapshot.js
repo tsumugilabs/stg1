@@ -38,7 +38,8 @@ export function encode(game) {
       Math.round(player.angle * 1000) / 1000,
       player.hp, player.lives,
       (player.alive ? 1 : 0) | (player.out ? 2 : 0) | (player.boosting ? 4 : 0)
-        | (player.braking ? 8 : 0) | (player.chute ? 16 : 0),
+        | (player.braking ? 8 : 0) | (player.chute ? 16 : 0)
+        | (player.stranded ? 32 : 0),
       player.chute ? Math.round(player.chute.timer * 10) / 10 : 0,
       Math.round(player.invulnerable * 10) / 10,
       player.craft.id,
@@ -65,6 +66,11 @@ export function encode(game) {
     // fly through a silent, still sky.
     ev: game.netEvents,
   };
+  snap.w = game.boss ? null : (() => {
+    // Where a stranded pilot should be looking before the flagship shows up.
+    const eye = game.spectateTarget();
+    return eye ? [Math.round(eye.x), Math.round(eye.y)] : null;
+  })();
   snap.o = game.boss ? [
     Math.round(game.boss.x), Math.round(game.boss.y),
     Math.round(game.boss.angle * 1000) / 1000,
@@ -83,6 +89,7 @@ export function readPlayer(row) {
     boosting: (flags & 4) !== 0,
     braking: (flags & 8) !== 0,
     downed: (flags & 16) !== 0,
+    stranded: (flags & 32) !== 0,
     chuteTimer: row[6],
     invulnerable: row[7],
     craftId: row[8],

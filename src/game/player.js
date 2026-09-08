@@ -40,12 +40,13 @@ const BURNER_REFILL = 0.30;
 const BURNER_MIN = 0.25;
 
 /**
- * How long a pilot hangs under the silk before the sky claims them. Long
- * enough that a mate deep in a fight can finish it, break off and cross the
- * map — the AI takes about four seconds, but four people have to notice
- * first, and noticing is the slow part.
+ * How long a pilot hangs under the silk before the sky claims them.
+ *
+ * Long, because of what happens when it runs out: the pilot sits out the rest
+ * of the era. A window that expires while nobody has quite got round to you is
+ * one thing when it costs a craft, and another when it costs the stage.
  */
-const RESCUE_WINDOW = 20;
+export const RESCUE_WINDOW = 40;
 /** A drifting pilot steers weakly — enough to meet a rescuer halfway. */
 const CHUTE_STEER = 46;
 /** However the multipliers stack, a craft never turns faster than this. */
@@ -63,6 +64,8 @@ export class Player {
     this.downTimer = 0;
     this.out = false;
     this.chute = null;
+    // Shot down, not rescued, and waiting out the era from the other side.
+    this.stranded = false;
     // The airframe this seat started in. Modules are always resolved from
     // here, never from the craft as it currently stands, or a rank would
     // compound on the last one.
@@ -114,6 +117,7 @@ export class Player {
     this.boosting = false;
     this.downTimer = 0;
     this.chute = null;
+    this.stranded = false;
     this.fireTimer = 0;
     this.sinceFired = 99;
     this.trailTimer = 0;
