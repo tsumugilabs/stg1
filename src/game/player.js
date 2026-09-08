@@ -25,11 +25,27 @@ const BRAKE_REFILL = 0.42;
 const BRAKE_MIN = 0.18;
 
 /**
- * How long a pilot hangs under the silk before the sky claims them. Long
- * enough to cross most of a screen to reach someone, short enough that the
- * flight has to break off and go and get them.
+ * The afterburner is the brake's opposite number and works the same way: a
+ * reserve, not a mode. It burns faster than the brake and comes back slower,
+ * so it is worth about a second and a half of straight-line speed. Holding it
+ * while it is spent does not recharge it, for the same reason the brake
+ * behaves that way — otherwise it stutters at the bottom of the gauge.
+ *
+ * Deliberately not a free upgrade: it costs turn rate, so a burn is a
+ * commitment to a straight line. Anyone who burns through a turning fight
+ * arrives fast and pointing the wrong way.
  */
-const RESCUE_WINDOW = 12;
+const BURNER_DRAIN = 0.62;
+const BURNER_REFILL = 0.30;
+const BURNER_MIN = 0.25;
+
+/**
+ * How long a pilot hangs under the silk before the sky claims them. Long
+ * enough that a mate deep in a fight can finish it, break off and cross the
+ * map — the AI takes about four seconds, but four people have to notice
+ * first, and noticing is the slow part.
+ */
+const RESCUE_WINDOW = 20;
 /** A drifting pilot steers weakly — enough to meet a rescuer halfway. */
 const CHUTE_STEER = 46;
 /** However the multipliers stack, a craft never turns faster than this. */
@@ -89,6 +105,8 @@ export class Player {
     this.hitFlash = 0;
     this.brakeCharge = 1;
     this.braking = false;
+    this.burnerCharge = 1;
+    this.boosting = false;
     this.downTimer = 0;
     this.chute = null;
     this.fireTimer = 0;
@@ -104,6 +122,26 @@ export class Player {
     this.laserActive = 0;
     this.laserTick = 0;
     this.swarmTimer = this.craft.swarm ? WEAPONS.swarm(this.craft.swarm).interval : 0;
+  }
+
+  /**
+   * The afterburner. The brake wins if somebody holds both: asking a craft to
+   * speed up and slow down at once should do the safe thing.
+   */
+  updateBurner(dt, input) {
+    if (input.isHeld('boost') && !this.braking) {
+      const enough = this.boosting ? this.burnerCharge > 0 : this.burnerCharge >= BURNER_MIN;
+      if (enough) {
+        this.boosting = true;
+        this.burnerCharge = Math.max(0, this.burnerCharge - BURNER_DRAIN * dt);
+        if (this.burnerCharge === 0) this.boosting = false;
+        return;
+      }
+      this.boosting = false;
+      return;
+    }
+    this.boosting = false;
+    this.burnerCharge = Math.min(1, this.burnerCharge + BURNER_REFILL * dt);
   }
 
   updateBrake(dt, input) {
@@ -189,7 +227,9 @@ export class Player {
 
   /** Throttle setting right now: full, or back on the brake. */
   get speed() {
-    return this.craft.speed * (this.braking ? this.craft.brake.speed : 1);
+    if (this.braking) return this.craft.speed * this.craft.brake.speed;
+    if (this.boosting) return this.craft.speed * this.craft.burner.speed;
+    return this.craft.speed;
   }
 
   /**
@@ -205,8 +245,10 @@ export class Player {
   get turnRate() {
     const glide = this.craft.glideTurn;
     const base = glide && this.sinceFired >= glide.after ? glide.turnRate : this.craft.turnRate;
-    const braked = base * (this.braking ? this.craft.brake.turn : 1);
-    return Math.min(braked, TURN_CEILING);
+    let rate = base;
+    if (this.braking) rate *= this.craft.brake.turn;
+    else if (this.boosting) rate *= this.craft.burner.turn;
+    return Math.min(rate, TURN_CEILING);
   }
 
   update(dt, input, game) {
@@ -214,6 +256,7 @@ export class Player {
     const craft = this.craft;
 
     this.updateBrake(dt, input);
+    this.updateBurner(dt, input);
 
     const dir = input.direction();
     if (dir) {
@@ -372,6 +415,22 @@ export class Player {
         ctx.fill();
       }
       ctx.globalAlpha = this.hidden ? 0.5 : 1;
+    }
+    if (this.boosting) {
+      // A long flame off the tail that flickers with the frame, so a burn is
+      // obvious to everyone else in the flight, not just to whoever is on it.
+      const flicker = 1 + Math.sin(time * 40) * 0.16;
+      const grad = ctx.createLinearGradient(-10, 0, -46 * flicker, 0);
+      grad.addColorStop(0, 'rgba(255,255,255,0.95)');
+      grad.addColorStop(0.35, 'rgba(255,179,71,0.8)');
+      grad.addColorStop(1, 'rgba(255,107,107,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(-8, -6);
+      ctx.lineTo(-46 * flicker, 0);
+      ctx.lineTo(-8, 6);
+      ctx.closePath();
+      ctx.fill();
     }
     drawPlayer(ctx, { id: this.craft.id, colors: this.craft.colors, thrust: true, time });
     if (this.hitFlash > 0) {

@@ -189,6 +189,7 @@ export function resolveCraft(base, parts = [], modules = []) {
     barrels: base.barrels.map((barrel) => ({ ...barrel })),
     colors: { ...base.colors },
     brake: { ...base.brake },
+    burner: { ...base.burner },
   };
   for (const part of parts) {
     if (!part) continue;

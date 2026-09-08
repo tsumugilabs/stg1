@@ -28,6 +28,10 @@ function layout(w, h) {
     // Inboard of the fire button, so the same thumb can reach both and the
     // stick hand is left alone.
     brake: { x: w - inset - button * 2.5, y: h - inset, r: button * 0.82 },
+    // The afterburner sits directly above the brake: down for slow, up for
+    // fast, one thumb, and it does not reach any further towards the stick
+    // than the brake already does.
+    boost: { x: w - inset - button * 2.5, y: h - inset - button * 2.1, r: button * 0.78 },
     auto: { x: w - inset, y: h - inset - button - 42, w: 124, h: 38 },
     pause: { x: w - 48, y: 78, r: 27 },
   };
@@ -53,6 +57,7 @@ export class TouchControls {
     this.stick = null;
     this.firePointer = null;
     this.brakePointer = null;
+    this.boostPointer = null;
     this.pauseTapped = false;
     this.tapped = false;
     this.canvas = null;
@@ -126,6 +131,10 @@ export class TouchControls {
       this.brakePointer = event.pointerId;
       return;
     }
+    if (inCircle(point, ui.boost)) {
+      this.boostPointer = event.pointerId;
+      return;
+    }
     this.stick = { id: event.pointerId, ox: point.x, oy: point.y, x: point.x, y: point.y };
   }
 
@@ -147,6 +156,7 @@ export class TouchControls {
     if (this.stick && this.stick.id === event.pointerId) this.stick = null;
     if (this.firePointer === event.pointerId) this.firePointer = null;
     if (this.brakePointer === event.pointerId) this.brakePointer = null;
+    if (this.boostPointer === event.pointerId) this.boostPointer = null;
   }
 
   /** Steering vector from the stick, or null while it is inside the dead zone. */
@@ -165,6 +175,10 @@ export class TouchControls {
 
   get braking() {
     return this.enabled && this.brakePointer !== null;
+  }
+
+  get boosting() {
+    return this.enabled && this.boostPointer !== null;
   }
 
   endFrame() {
@@ -257,6 +271,22 @@ export class TouchControls {
     ctx.stroke();
     ctx.globalAlpha = 1;
     centeredText(ctx, 'BRAKE', b.x, b.y, Math.round(b.r * 0.36), braking ? '#062430' : UI_INK);
+
+    // Afterburner. Amber against the brake's cyan, so the pair reads as two
+    // opposite things rather than two more buttons.
+    const g = ui.boost;
+    const boosting = this.boostPointer !== null;
+    ctx.globalAlpha = boosting ? 0.85 : 0.4;
+    ctx.fillStyle = boosting ? '#ffb347' : UI_PANEL;
+    ctx.beginPath();
+    ctx.arc(g.x, g.y, g.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 0.9;
+    ctx.strokeStyle = boosting ? '#ffffff' : UI_DIM;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    centeredText(ctx, 'BOOST', g.x, g.y, Math.round(g.r * 0.36), boosting ? '#301c00' : UI_INK);
 
     // Auto-fire toggle.
     const a = ui.auto;

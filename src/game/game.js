@@ -7,7 +7,9 @@ import { Enemy } from './enemy.js';
 import { Parachutist } from './parachutist.js';
 import { Player } from './player.js';
 import { drawHud } from './hud.js';
-import { cardAt, inStart, MODES, modeLayout, selectLayout } from './selectscreen.js';
+import {
+  cardAt, inStart, MODES, modeLayout, selectLayout, sizeLayout, SQUAD_SIZES,
+} from './selectscreen.js';
 import { loadoutLayout, ROWS_VISIBLE, rowAt } from './loadout.js';
 import {
   DEBUG_ACTIONS, DEBUG_TAP_GAP, DEBUG_TAPS, debugButtonAt, debugLayout,
@@ -25,11 +27,16 @@ import { cycleAt, difficultyAt, eraAt, ERAS } from './levels.js';
 const HIGH_SCORE_KEY = 'chronopilot.highscore';
 const CRAFT_KEY = 'chronopilot.craft';
 const MODE_KEY = 'chronopilot.mode';
+const SQUAD_KEY = 'chronopilot.squadsize';
 const LOCKER_KEY = 'chronopilot.locker';
 const LOADOUT_KEY = 'chronopilot.loadout';
 const LOCKER_LIMIT = 60;
 const DEBUG_KEY = 'chronopilot.debug';
-/** Craft in a squadron, counting the one the player is flying. */
+/**
+ * Default flight size. The list of sizes lives with the screen that offers
+ * them; everything that scales with the flight reads `players.length`, so a
+ * two-player game is a real configuration and not four seats with two empty.
+ */
 export const SQUAD_SIZE = 4;
 /** Chance an escort coughs up a module when it goes down, in SORTIE. */
 const MODULE_DROP_CHANCE = 0.07;
@@ -46,6 +53,14 @@ const RESCUE_BONUS = [500, 1000, 2000, 4000, 8000];
 const PILOT_RESCUE = 1000;
 /** How close a mate has to fly to catch a parachute. */
 const CHUTE_REACH = 34;
+/**
+ * How far out an escort still counts as "on top of" one player. A little
+ * wider than a screen, so the crowd measure matches what a person can see
+ * coming rather than only what is already in their face.
+ */
+const CROWD_RADIUS = 620;
+/** Slack over the per-craft share, so the sky can breathe without flooding. */
+const CROWD_HEADROOM = 2;
 
 function readHighScore() {
   try {
@@ -127,6 +142,8 @@ export class Game {
     this.selectBoxes = null;
     const storedMode = readStored(MODE_KEY, 'arcade');
     this.mode = ['arcade', 'squadron', 'sortie'].includes(storedMode) ? storedMode : 'arcade';
+    const storedSize = Number(readStored(SQUAD_KEY, String(SQUAD_SIZE)));
+    this.squadSize = SQUAD_SIZES.includes(storedSize) ? storedSize : SQUAD_SIZE;
     this.locker = readJson(LOCKER_KEY, []);
     this.loadout = readJson(LOADOUT_KEY, {});
     this.modules = [];
@@ -135,6 +152,7 @@ export class Game {
     this.lootTimer = 0;
     this.modeIndex = Math.max(0, MODES.findIndex((m) => m.id === this.mode));
     this.modeBoxes = null;
+    this.sizeBoxes = null;
     this.loadoutBoxes = null;
     this.loadoutPane = 'slots';
     this.slotIndex = 0;
@@ -186,7 +204,7 @@ export class Game {
    * wingmen for now, and are exactly the seats a peer will take later.
    */
   buildRoster() {
-    const wanted = this.squadron ? SQUAD_SIZE : 1;
+    const wanted = this.squadron ? this.squadSize : 1;
     const selectable = CRAFT.filter((craft) => !craft.hidden || this.unlocked);
     this.players = [];
     this.wingmen = [];
@@ -247,9 +265,37 @@ export class Game {
   }
 
   /** Craft the roster spawns around: pressure spreads across the squadron. */
+  /**
+   * Who the next escort comes in on. Not random: the least busy craft in the
+   * flight. Measuring showed the old random pick left one player circling an
+   * empty sky while another was swamped, and simply raising the cap made that
+   * worse — it added escorts nobody could see. Sharing them out is what
+   * actually puts more aircraft in front of each person.
+   */
   spawnAnchor() {
     const living = this.livingPlayers();
-    return living.length ? living[randInt(0, living.length - 1)] : this.player;
+    if (!living.length) return this.player;
+    let best = living[0];
+    let fewest = Infinity;
+    for (const player of living) {
+      const near = this.crowdAround(player);
+      // Ties go to a random one of the tied craft rather than always seat 0.
+      if (near < fewest || (near === fewest && Math.random() < 0.5)) {
+        best = player;
+        fewest = near;
+      }
+    }
+    return best;
+  }
+
+  /** Escorts close enough to one craft to be that player's problem. */
+  crowdAround(player) {
+    let near = 0;
+    for (const enemy of this.enemies) {
+      if (enemy.dead) continue;
+      if (distance(enemy.x, enemy.y, player.x, player.y) < CROWD_RADIUS) near += 1;
+    }
+    return near;
   }
 
   get craft() {
@@ -351,9 +397,9 @@ export class Game {
 
   // --- spawning ------------------------------------------------------------
 
-  spawnPoint() {
+  spawnPoint(on = null) {
     const angle = randRange(0, TAU);
-    const anchor = this.spawnAnchor();
+    const anchor = on ?? this.spawnAnchor();
     return {
       x: anchor.x + Math.cos(angle) * this.spawnRadius,
       y: anchor.y + Math.sin(angle) * this.spawnRadius,
@@ -361,8 +407,8 @@ export class Game {
     };
   }
 
-  spawnSquadron(count) {
-    const spot = this.spawnPoint();
+  spawnSquadron(count, on = null) {
+    const spot = this.spawnPoint(on);
     const anchor = this.nearestPlayer(spot.x, spot.y);
     const heading = Math.atan2(anchor.y - spot.y, anchor.x - spot.x);
     for (let i = 0; i < count; i += 1) {
@@ -614,8 +660,26 @@ export class Game {
 
     const layout = modeLayout(this.cam.width, this.cam.height, MODES.length);
     this.modeBoxes = layout;
+    const onSquadron = MODES[this.modeIndex].id === 'squadron';
+    // Flight size lives with the mode that uses it, so there is no extra
+    // screen between picking SQUADRON and flying.
+    const sizes = onSquadron ? sizeLayout(layout, this.cam.width) : null;
+    this.sizeBoxes = sizes;
+    if (onSquadron) {
+      const jump = (this.input.wasPressed('down') ? 1 : 0) - (this.input.wasPressed('up') ? 1 : 0);
+      if (jump !== 0) this.setSquadSize(SQUAD_SIZES[
+        (SQUAD_SIZES.indexOf(this.squadSize) + jump + SQUAD_SIZES.length) % SQUAD_SIZES.length]);
+    }
+
     const touch = this.input.touch;
     let confirmed = false;
+    if (touch && touch.tapPoint && sizes) {
+      const picked = rowAt(touch.tapPoint, sizes.boxes);
+      if (picked !== -1) {
+        this.setSquadSize(SQUAD_SIZES[picked]);
+        touch.tapPoint = null;
+      }
+    }
     if (touch && touch.tapPoint) {
       const card = rowAt(touch.tapPoint, layout.cards);
       if (card !== -1) {
@@ -627,10 +691,18 @@ export class Game {
     if (this.input.wasPressed('start') || this.input.wasPressed('fire') || confirmed) {
       this.mode = MODES[this.modeIndex].id;
       writeStored(MODE_KEY, this.mode);
+      writeStored(SQUAD_KEY, String(this.squadSize));
       this.rebuildCraft();
       this.state = 'select';
     }
     if (this.input.wasPressed('pause')) this.state = 'title';
+  }
+
+  setSquadSize(size) {
+    if (!SQUAD_SIZES.includes(size) || size === this.squadSize) return;
+    this.squadSize = size;
+    writeStored(SQUAD_KEY, String(size));
+    this.sfx.hit();
   }
 
   /** Shared by every attract-style screen: keep the sky moving underneath. */
@@ -1065,12 +1137,24 @@ export class Game {
 
     this.spawnTimer -= dt;
     const era = this.era;
-    // The sky has to be busy enough for four craft to have something to do.
-    const scale = this.squadScale(0.5);
-    const cap = Math.round(Math.min(era.maxEnemies + cycleAt(this.eraIndex), 12) * scale);
-    if (this.spawnTimer <= 0 && this.enemies.length < cap) {
-      this.spawnTimer = randRange(...era.spawnInterval) / (this.difficulty * scale);
-      this.spawnSquadron(Math.random() < era.squadronChance ? 2 : 1);
+    /*
+     * Two separate rules, and keeping them separate is the whole trick.
+     *
+     * The total scales with the flight, one full share per craft, so four
+     * people meet four times the opposition rather than dividing one era
+     * between them. But no single player may have more than a solo player's
+     * worth of escorts around them at once, however large the total gets.
+     * That per-craft ceiling is the thing that stops a big flight turning the
+     * screen into soup: the sky gets busier by being wider, not denser.
+     */
+    const share = Math.min(era.maxEnemies + cycleAt(this.eraIndex), 12);
+    const cap = Math.round(share * this.squadScale(1));
+    const anchor = this.spawnAnchor();
+    const room = this.crowdAround(anchor) < share + CROWD_HEADROOM;
+    if (this.spawnTimer <= 0 && this.enemies.length < cap && room) {
+      this.spawnTimer = randRange(...era.spawnInterval)
+        / (this.difficulty * this.squadScale(0.75));
+      this.spawnSquadron(Math.random() < era.squadronChance ? 2 : 1, anchor);
     }
 
     if (this.kills >= this.quota) this.spawnBoss();

@@ -198,6 +198,29 @@ export function modeLayout(width, height, count = 3) {
   return { cards };
 }
 
+/** How many craft a flight can be. Two people is a flight; so is four. */
+export const SQUAD_SIZES = [2, 3, 4];
+
+/**
+ * The flight-size chips, sitting under the mode cards. Drawn and hit-tested
+ * from the same boxes, like every other control on these screens.
+ */
+export function sizeLayout(layout, width) {
+  const last = layout.cards[layout.cards.length - 1];
+  const y = last.y + layout.cards[0].h + 22;
+  const chip = Math.min(84, Math.max(58, width * 0.11));
+  const height = Math.max(34, chip * 0.46);
+  const gap = 10;
+  const total = chip * 3 + gap * 2;
+  const left = (width - total) / 2;
+  return {
+    y,
+    boxes: [0, 1, 2].map((i) => ({
+      x: left + i * (chip + gap), y, w: chip, h: height,
+    })),
+  };
+}
+
 export const MODES = [
   {
     id: 'arcade',
@@ -208,8 +231,13 @@ export const MODES = [
   {
     id: 'squadron',
     name: 'SQUADRON',
-    blurb: '4機編隊で飛ぶ。',
-    detail: '僚機3機とともに出撃します (現在はAI操縦)。',
+    blurb: '編隊で飛ぶ。',
+    detail: '僚機とともに出撃します (現在はAI操縦)。',
+    // The card reads back the size that is actually selected.
+    lines: (game) => [
+      `${game.squadSize}機編隊で飛ぶ。`,
+      `僚機${game.squadSize - 1}機とともに出撃します (現在はAI操縦)。`,
+    ],
   },
   {
     id: 'sortie',
@@ -244,15 +272,43 @@ export function drawModeSelect(ctx, game, cam) {
 
     const cx = box.x + box.w / 2;
     const scale = clamp(box.w / 280, 0.62, 1.1);
+    const [blurb, detail] = mode.lines ? mode.lines(game) : [mode.blurb, mode.detail];
     uiText(ctx, mode.name, cx, box.y + box.h * 0.34, Math.round(28 * scale), selected ? UI_INK : UI_DIM);
-    uiText(ctx, mode.blurb, cx, box.y + box.h * 0.58, Math.round(13 * scale), selected ? UI_INK : UI_DIM);
-    uiText(ctx, mode.detail, cx, box.y + box.h * 0.78, Math.round(11 * scale), UI_DIM);
+    uiText(ctx, blurb, cx, box.y + box.h * 0.58, Math.round(13 * scale), selected ? UI_INK : UI_DIM);
+    uiText(ctx, detail, cx, box.y + box.h * 0.78, Math.round(11 * scale), UI_DIM);
   });
+
+  const last = layout.cards[layout.cards.length - 1];
+  const footer = last.y + layout.cards[0].h;
+  const onSquadron = MODES[game.modeIndex].id === 'squadron';
+  let hint = game.touchMode ? 'モードをタップして決定' : '←  →  で選択 ・ ENTER で決定';
+
+  if (onSquadron) {
+    const sizes = game.sizeBoxes ?? sizeLayout(layout, w);
+    SQUAD_SIZES.forEach((size, i) => {
+      const box = sizes.boxes[i];
+      const picked = size === game.squadSize;
+      ctx.globalAlpha = picked ? 0.9 : 0.45;
+      ctx.fillStyle = picked ? '#1d3a4d' : UI_PANEL;
+      roundedRect(ctx, box.x, box.y, box.w, box.h, 10);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = picked ? 2.5 : 1.5;
+      ctx.strokeStyle = picked ? '#7cf5ff' : '#2a4159';
+      ctx.stroke();
+      uiText(ctx, `${size}機`, box.x + box.w / 2, box.y + box.h * 0.68,
+        Math.round(box.h * 0.44), picked ? '#7cf5ff' : UI_DIM);
+    });
+    hint = game.touchMode
+      ? '編隊の機数をタップ ・ もう一度モードをタップで決定'
+      : '←  →  でモード ・ ↑  ↓  で機数 ・ ENTER で決定';
+    uiText(ctx, hint, w / 2, sizes.y + sizes.boxes[0].h + 26, 14, UI_DIM);
+    return;
+  }
 
   const owned = game.locker.length;
   if (MODES[game.modeIndex].id === 'sortie' && owned > 0) {
-    uiText(ctx, `保管庫: ${owned} パーツ`, w / 2, layout.cards[layout.cards.length - 1].y + layout.cards[0].h + 34, 13, '#7cf5ff');
+    uiText(ctx, `保管庫: ${owned} パーツ`, w / 2, footer + 34, 13, '#7cf5ff');
   }
-  uiText(ctx, game.touchMode ? 'モードをタップして決定' : '←  →  で選択 ・ ENTER で決定',
-    w / 2, layout.cards[layout.cards.length - 1].y + layout.cards[0].h + 62, 14, UI_DIM);
+  uiText(ctx, hint, w / 2, footer + 62, 14, UI_DIM);
 }

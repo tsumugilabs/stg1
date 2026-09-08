@@ -159,3 +159,36 @@ test('the slowest craft can still be flown', () => {
   // A craft that cannot outrun anything has no escape, which is not a trade.
   assert.ok(slowest.speed >= 150);
 });
+
+test('the afterburner buys speed and always pays for it in turning', () => {
+  for (const craft of CRAFT) {
+    const burner = craft.burner;
+    assert.ok(burner, `${craft.name} has no afterburner`);
+    assert.ok(burner.speed > 1.4, `${craft.name} barely accelerates: x${burner.speed}`);
+    // No craft may burn without widening its circle: a free top speed would
+    // make the burner the way you always fly rather than a decision.
+    assert.ok(burner.turn < 1,
+      `${craft.name} keeps its turn rate on the burner (x${burner.turn})`);
+    const open = craft.speed / craft.turnRate;
+    const burning = (craft.speed * burner.speed) / (craft.turnRate * burner.turn);
+    assert.ok(burning > open * 1.5,
+      `${craft.name} corners almost as well on the burner: ${open.toFixed(1)} -> ${burning.toFixed(1)}`);
+  }
+});
+
+test('the brake and the burner pull in opposite directions on every craft', () => {
+  for (const craft of CRAFT) {
+    assert.ok(craft.brake.speed < 1 && craft.burner.speed > 1,
+      `${craft.name} does not slow on the brake and speed up on the burner`);
+    assert.ok(craft.brake.turn > 1 && craft.burner.turn < 1,
+      `${craft.name} does not tighten on the brake and widen on the burner`);
+  }
+});
+
+test('the heavy craft gains most from a burn and the nimble one least', () => {
+  const selectable = CRAFT.filter((c) => !c.hidden);
+  const best = selectable.reduce((x, y) => (y.burner.speed > x.burner.speed ? y : x));
+  const worst = selectable.reduce((x, y) => (y.burner.speed < x.burner.speed ? y : x));
+  assert.equal(best.id, 'eagle', 'the craft with the least speed should gain the most');
+  assert.equal(worst.id, 'dragon', 'the craft that is already fast should gain the least');
+});
