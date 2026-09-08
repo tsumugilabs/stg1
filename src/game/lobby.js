@@ -43,11 +43,29 @@ export function menuLayout(width, height) {
 export function codeLayout(width, height) {
   const columns = 8;
   const rows = Math.ceil(CODE_ALPHABET.length / columns);
-  const gap = Math.max(6, width * 0.008);
-  const key = Math.min((width * 0.82 - gap * (columns - 1)) / columns, 62);
+  const gap = Math.max(5, width * 0.007);
+  const action = Math.max(34, Math.min(46, height * 0.09));
+  /*
+   * Laid out from both ends, not from the top down.
+   *
+   * The first version put the keys at 38% of the height and hung the buttons
+   * off the bottom of the grid, which walks straight off a short landscape
+   * canvas and takes the "join" button with it. Here the header and the two
+   * rows of buttons are reserved first and the keys take what is left, so the
+   * thing you have to press is always on the screen.
+   */
+  const headerBottom = height * 0.42;
+  const footerTop = height - (action * 2 + gap + 18);
+  const room = Math.max(60, footerTop - headerBottom - gap);
+  const key = Math.max(26, Math.min(
+    (width * 0.86 - gap * (columns - 1)) / columns,
+    (room - gap * (rows - 1)) / rows,
+    62,
+  ));
   const gridW = columns * key + (columns - 1) * gap;
+  const gridH = rows * key + (rows - 1) * gap;
   const left = (width - gridW) / 2;
-  const top = height * 0.38;
+  const top = headerBottom + Math.max(0, (footerTop - headerBottom - gridH) / 2);
   const keys = [];
   for (let i = 0; i < CODE_ALPHABET.length; i += 1) {
     keys.push(button(
@@ -56,30 +74,34 @@ export function codeLayout(width, height) {
       key, key, CODE_ALPHABET[i],
     ));
   }
-  const footer = top + rows * (key + gap) + 12;
+  const wide = Math.min(150, gridW / 2 - gap);
   return {
     keys,
     key,
-    del: button(width / 2 - key * 2.2, footer, key * 2, key * 0.8, 'del'),
-    go: button(width / 2 + key * 0.2, footer, key * 2, key * 0.8, 'go'),
-    back: button(width / 2 - 70, footer + key * 0.8 + 16, 140, 38, 'back'),
+    del: button(width / 2 - wide - gap / 2, footerTop, wide, action, 'del'),
+    go: button(width / 2 + gap / 2, footerTop, wide, action, 'go'),
+    back: button(width / 2 - 70, footerTop + action + gap, 140, action, 'back'),
   };
 }
 
 export function roomLayout(width, height) {
   const rowW = Math.min(width * 0.78, 460);
-  const rowH = Math.max(46, Math.min(58, height * 0.09));
+  const action = Math.max(32, Math.min(40, height * 0.08));
+  // Reserve the buttons first, then fit four seat rows into what is left.
+  const top = height * 0.30;
+  const footerRoom = action * 2 + 24;
+  const rowH = Math.max(30, Math.min(58, (height - top - footerRoom - 40) / 4 - 8));
   const left = (width - rowW) / 2;
-  const top = height * 0.32;
   const rows = [];
   for (let i = 0; i < 4; i += 1) rows.push(button(left, top + i * (rowH + 8), rowW, rowH, `seat${i}`));
-  const footer = top + 4 * (rowH + 8) + 14;
+  const footer = top + 4 * (rowH + 8) + 10;
   return {
     rows,
     rowW,
-    sizes: [2, 3, 4].map((n, i) => button(left + i * 78, footer, 70, 36, `size${n}`)),
-    action: button(left + rowW - 168, footer, 168, 40, 'action'),
-    back: button(left, footer + 50, 140, 36, 'back'),
+    rowH,
+    sizes: [2, 3, 4].map((n, i) => button(left + i * 78, footer, 70, action, `size${n}`)),
+    action: button(left + rowW - 168, footer, 168, action, 'action'),
+    back: button(left, footer + action + 10, 140, action, 'back'),
   };
 }
 
@@ -133,9 +155,9 @@ export function drawLobby(ctx, game, cam) {
 
   if (stage === 'code') {
     const layout = game.lobbyBoxes;
-    uiText(ctx, 'ルームコード', w / 2, h * 0.17, title, '#ffd166');
+    uiText(ctx, 'ルームコード', w / 2, h * 0.16, Math.min(title, h * 0.09), '#ffd166');
     const typed = (game.netCode + '____').slice(0, 4).split('').join('  ');
-    uiText(ctx, typed, w / 2, h * 0.30, Math.min(52, w / 14), UI_INK);
+    uiText(ctx, typed, w / 2, h * 0.34, Math.min(52, w / 14, h * 0.18), UI_INK);
     for (const key of layout.keys) chip(ctx, key, key.id, {});
     chip(ctx, layout.del, '消す');
     chip(ctx, layout.go, '参加', { on: game.netCode.length === 4, accent: '#ffd166' });
@@ -175,6 +197,10 @@ export function drawLobby(ctx, game, cam) {
     ctx.lineWidth = mine ? 3 : 1.5;
     ctx.strokeStyle = mine ? '#ffd166' : '#2a4159';
     ctx.stroke();
+    if (mine) {
+      uiText(ctx, '機体をえらぶ →', box.x + box.w - 18, box.y + box.h * 0.64, 12,
+        '#ffd166', 'right');
+    }
     if (!active) {
       uiText(ctx, '—', box.x + box.w / 2, box.y + box.h * 0.66, 18, '#3d5570');
       return;
@@ -186,9 +212,10 @@ export function drawLobby(ctx, game, cam) {
       kind === 'ai' ? '#66809c' : UI_INK, 'left');
     const craft = slot && slot.craft ? CRAFT.find((c) => c.id === slot.craft) : null;
     if (craft) {
-      uiText(ctx, craft.name, box.x + box.w - 116, box.y + box.h * 0.64, 14,
+      uiText(ctx, craft.name, box.x + box.w - (mine ? 120 : 116), box.y + box.h * 0.64, 14,
         craft.colors.accent, 'right');
     }
+    if (mine) return;                       // your row shows the picker instead
     if (kind === 'peer') {
       uiText(ctx, slot.ready ? 'READY' : '準備中', box.x + box.w - 18, box.y + box.h * 0.64, 14,
         slot.ready ? '#7cf5ff' : UI_DIM, 'right');
@@ -211,7 +238,7 @@ export function drawLobby(ctx, game, cam) {
   chip(ctx, layout.back, '退出');
 
   uiText(ctx, room && room.isHost
-    ? '空いた席はAI僚機が飛びます。2人でも出撃できます'
-    : 'ホストの出撃を待っています',
-  w / 2, layout.back.y + layout.back.h + 24, 12, UI_DIM);
+    ? '自分の行をタップで機体変更 ・ 空いた席はAI僚機。2人でも出撃できます'
+    : '自分の行をタップで機体変更 ・ ホストの出撃を待っています',
+  w / 2, Math.min(h - 8, layout.back.y + layout.back.h + 22), 12, UI_DIM);
 }

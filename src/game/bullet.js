@@ -3,7 +3,7 @@ import { turnToward } from '../core/math.js';
 export class Bullet {
   constructor({
     x, y, angle, speed, life, team, color, radius = 3, damage = 1, pierce = 0,
-    homing = null,
+    homing = null, owner = -1,
   }) {
     this.x = x;
     this.y = y;
@@ -19,6 +19,8 @@ export class Bullet {
     // { turnRate, target } turns this into a missile: it steers, and it picks
     // a new mark when the one it was chasing goes down.
     this.homing = homing;
+    // Which seat fired it. The magazine limit is per pilot, not per sky.
+    this.owner = owner;
     this.speed = speed;
     this.dead = false;
   }
