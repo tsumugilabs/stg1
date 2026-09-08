@@ -23,6 +23,11 @@ import { ModulePickup } from './pickup.js';
 import { Wingman } from './wingman.js';
 import { beamEnd, distanceToSegment, drawBeam, Flare } from './weapons.js';
 import { cycleAt, difficultyAt, eraAt, ERAS, toughnessAt } from './levels.js';
+import { codeLayout, drawLobby, hitButton, menuLayout, roomLayout } from './lobby.js';
+import { Room } from '../net/room.js';
+import {
+  hostOnline, hostOverTabs, joinOnline, joinOverTabs, makeCode, onlineAvailable,
+} from '../net/link.js';
 
 const HIGH_SCORE_KEY = 'chronopilot.highscore';
 const CRAFT_KEY = 'chronopilot.craft';
@@ -61,6 +66,8 @@ const CHUTE_REACH = 34;
 const CROWD_RADIUS = 620;
 /** Slack over the per-craft share, so the sky can breathe without flooding. */
 const CROWD_HEADROOM = 2;
+/** The characters a room code can contain, for typing one on a keyboard. */
+const CODE_KEYS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 /*
  * Squadron ranks, from the second lap onwards.
@@ -171,6 +178,20 @@ export class Game {
     this.modeIndex = Math.max(0, MODES.findIndex((m) => m.id === this.mode));
     this.modeBoxes = null;
     this.sizeBoxes = null;
+    // Online. `room` is the session; everything else is the screen around it.
+    this.room = null;
+    this.netHandle = null;
+    this.netStage = 'menu';
+    this.netWay = 'tabs';
+    this.netCode = '';
+    this.netError = '';
+    this.netReady = false;
+    this.netClock = 0;
+    this.lobbyBoxes = null;
+    // A guest draws the host's world instead of simulating its own.
+    this.replica = false;
+    this.replicaEnemies = new Map();
+    this.nextNetId = 1;
     this.loadoutBoxes = null;
     this.loadoutPane = 'slots';
     this.slotIndex = 0;
@@ -228,14 +249,25 @@ export class Game {
     this.wingmen = [];
     for (let i = 0; i < wanted; i += 1) {
       const local = i === 0;
+      const seated = this.hosting ? this.room.slots[i] : null;
       const craftId = local
         ? this.baseCraft.id
-        : selectable[(this.craftIndex + i) % selectable.length].id;
+        : ((seated && seated.craft)
+          || selectable[(this.craftIndex + i) % selectable.length].id);
       const player = new Player(craftId, { local, index: i, name: `P${i + 1}` });
       player.lives = player.craft.lives;
       player.out = false;
       this.players.push(player);
-      if (!local) this.wingmen.push(new Wingman(player));
+      // A seat with somebody connected to it is flown from there; every other
+      // seat is flown by the AI. Game cannot tell the difference and does not
+      // get to ask — which is exactly what stage one was building towards.
+      const remote = this.hosting ? this.room.controllerFor(i) : null;
+      if (remote) {
+        player.remote = remote;
+        player.name = remote.name;
+      } else if (!local) {
+        this.wingmen.push(new Wingman(player));
+      }
     }
     this.localIndex = 0;
     this.placeFormation();
@@ -501,15 +533,26 @@ export class Game {
     const heading = Math.atan2(anchor.y - spot.y, anchor.x - spot.x);
     for (let i = 0; i < count; i += 1) {
       const offset = (i - (count - 1) / 2) * 46;
-      this.enemies.push(new Enemy({
+      this.enemies.push(this.tagEnemy(new Enemy({
         x: spot.x + Math.cos(heading + Math.PI / 2) * offset,
         y: spot.y + Math.sin(heading + Math.PI / 2) * offset,
         angle: heading,
         era: this.era,
         difficulty: this.difficulty,
         toughness: this.toughness,
-      }));
+      })));
     }
+  }
+
+  /**
+   * Gives an escort a number. Interpolation needs to know that the aircraft in
+   * this snapshot is the same one as in the last, and position alone cannot
+   * say so once two of them cross.
+   */
+  tagEnemy(enemy) {
+    enemy.netId = this.nextNetId;
+    this.nextNetId = (this.nextNetId + 1) % 100000;
+    return enemy;
   }
 
   spawnEscorts(count) {
@@ -525,7 +568,7 @@ export class Game {
         toughness: this.toughness,
       });
       enemy.isEscort = true;
-      this.enemies.push(enemy);
+      this.enemies.push(this.tagEnemy(enemy));
     }
   }
 
@@ -717,6 +760,7 @@ export class Game {
     switch (this.state) {
       case 'title': this.updateTitle(dt); break;
       case 'mode': this.updateMode(dt); break;
+      case 'lobby': this.updateLobby(dt); break;
       case 'select': this.updateSelect(dt); break;
       case 'loadout': this.updateLoadout(dt); break;
       case 'playing': this.updatePlaying(dt); break;
@@ -769,7 +813,15 @@ export class Game {
       if (picked !== -1) {
         this.setSquadSize(SQUAD_SIZES[picked]);
         touch.tapPoint = null;
+      } else if (sizes.online && rowAt(touch.tapPoint, [sizes.online]) === 0) {
+        touch.tapPoint = null;
+        this.openLobby();
+        return;
       }
+    }
+    if (onSquadron && this.input.wasPressed('discard')) {
+      this.openLobby();
+      return;
     }
     if (touch && touch.tapPoint) {
       const card = rowAt(touch.tapPoint, layout.cards);
@@ -794,6 +846,214 @@ export class Game {
     this.squadSize = size;
     writeStored(SQUAD_KEY, String(size));
     this.sfx.hit();
+  }
+
+  // --- online -------------------------------------------------------------
+
+  get onlineReady() {
+    return onlineAvailable();
+  }
+
+  openLobby() {
+    this.leaveRoom();
+    this.netStage = 'menu';
+    this.netError = '';
+    this.netCode = '';
+    this.netReady = false;
+    this.state = 'lobby';
+    this.sfx.hit();
+  }
+
+  /** Tears the room down whichever side of it we were on. */
+  leaveRoom() {
+    if (this.room) this.room.leave();
+    if (this.netHandle) this.netHandle.close();
+    this.room = null;
+    this.netHandle = null;
+    this.replica = false;
+    this.replicaEnemies.clear();
+  }
+
+  async startHosting() {
+    const code = makeCode();
+    this.netCode = code;
+    this.netStage = 'connecting';
+    const room = new Room({ host: true, name: 'P1', size: this.squadSize });
+    room.on('lobby', () => {});
+    try {
+      this.netHandle = this.netWay === 'online'
+        ? await hostOnline(code, (transport) => room.accept(transport))
+        : hostOverTabs(code, (transport) => room.accept(transport));
+    } catch (error) {
+      this.netError = error.message;
+      this.netStage = 'error';
+      return;
+    }
+    this.room = room;
+    this.mode = 'squadron';
+    this.modeIndex = Math.max(0, MODES.findIndex((m) => m.id === 'squadron'));
+    this.netStage = 'room';
+  }
+
+  async startJoining() {
+    this.netStage = 'connecting';
+    const room = new Room({ host: false, name: `P${Math.ceil(Math.random() * 9)}` });
+    room.on('closed', (why) => {
+      this.netError = why || '接続が切れました';
+      this.netStage = 'error';
+      this.replica = false;
+      if (this.state === 'playing') this.state = 'lobby';
+    });
+    room.on('start', (message) => this.beginAsGuest(message));
+    let transport;
+    try {
+      transport = this.netWay === 'online'
+        ? await joinOnline(this.netCode)
+        : joinOverTabs(this.netCode);
+    } catch (error) {
+      this.netError = error.message;
+      this.netStage = 'error';
+      return;
+    }
+    this.room = room;
+    room.connect(transport);
+    this.mode = 'squadron';
+    this.netStage = 'room';
+    // Tell the host what this seat is flying, so the room shows it.
+    room.sendPick(this.baseCraft.id);
+  }
+
+  /** Host: everybody who is here is here. Fly. */
+  launchRoom() {
+    const room = this.room;
+    if (!room || !room.isHost || room.humans < 2) return;
+    this.squadSize = room.size;
+    room.beginFlight();
+    this.replica = false;
+    room.on('leave', (peer) => this.releaseSeat(peer.seat));
+    this.startNewGame();
+    // Told after the roster exists, so the AI seats' airframes are the real
+    // ones rather than whatever a guest would have guessed for them.
+    room.announceStart(this.players.map((player) => player.craft.id));
+  }
+
+  /** Guest: the host says go. From here this screen only draws. */
+  beginAsGuest(message) {
+    this.squadSize = message.size || this.squadSize;
+    this.mode = 'squadron';
+    this.replica = true;
+    this.resetRun();
+    // A guest owns no seat but its own; the rest are drawn from snapshots.
+    this.localIndex = Math.max(0, this.room.seat);
+    for (let i = 0; i < this.players.length; i += 1) {
+      const id = message.craft && message.craft[i];
+      if (id) this.players[i].setCraft(id);
+      this.players[i].local = i === this.localIndex;
+    }
+    this.wingmen = [];
+    this.state = 'playing';
+  }
+
+  updateLobby(dt) {
+    this.driftAttract(dt);
+    const { width: w, height: h } = this.cam;
+    const stage = this.netStage;
+    this.lobbyBoxes = stage === 'menu' ? menuLayout(w, h)
+      : stage === 'code' ? codeLayout(w, h)
+        : stage === 'room' ? roomLayout(w, h)
+          : { back: { x: w / 2 - 70, y: h * 0.42 + 70, w: 140, h: 40, id: 'back' } };
+
+    const touch = this.input.touch;
+    const point = touch && touch.tapPoint ? touch.tapPoint : null;
+    const boxes = stage === 'menu'
+      ? [...this.lobbyBoxes.buttons, ...this.lobbyBoxes.ways, this.lobbyBoxes.back]
+      : stage === 'code'
+        ? [...this.lobbyBoxes.keys, this.lobbyBoxes.del, this.lobbyBoxes.go, this.lobbyBoxes.back]
+        : stage === 'room'
+          ? [...this.lobbyBoxes.sizes, this.lobbyBoxes.action, this.lobbyBoxes.back]
+          : [this.lobbyBoxes.back];
+    const tapped = point ? hitButton(point, boxes) : null;
+    if (tapped) touch.tapPoint = null;
+
+    // Keyboard shortcuts for the same actions, so this screen is not touch-only.
+    let pressed = tapped;
+    if (!pressed && stage === 'menu') {
+      if (this.input.wasPressed('start')) pressed = 'host';
+      else if (this.input.wasPressed('fire')) pressed = 'join';
+      else if (this.input.wasPressed('left') || this.input.wasPressed('right')) {
+        this.netWay = this.netWay === 'tabs' ? 'online' : 'tabs';
+        this.sfx.hit();
+      }
+    }
+    if (!pressed && stage === 'code') {
+      for (const code of this.input.recentCodes) {
+        const letter = code.startsWith('Key') ? code.slice(3)
+          : (code.startsWith('Digit') ? code.slice(5) : '');
+        if (letter && CODE_KEYS.includes(letter) && this.netCode.length < 4) {
+          this.netCode += letter;
+          this.sfx.hit();
+        }
+      }
+      if (this.input.wasPressed('discard')) pressed = 'del';
+      else if (this.input.wasPressed('start') && this.netCode.length === 4) pressed = 'go';
+    }
+    if (!pressed && stage === 'room') {
+      if (this.input.wasPressed('start') || this.input.wasPressed('fire')) pressed = 'action';
+    }
+    if (!pressed && (stage === 'error' || stage === 'menu') && this.input.wasPressed('pause')) {
+      pressed = 'back';
+    }
+
+    if (pressed) this.lobbyAction(pressed);
+    if (this.room && !this.room.isHost && this.room.started && this.state === 'lobby') {
+      // The start message can land while this screen is still up.
+      this.state = 'playing';
+    }
+  }
+
+  lobbyAction(id) {
+    this.sfx.hit();
+    const stage = this.netStage;
+    if (id === 'back') {
+      if (stage === 'room' || stage === 'error') {
+        this.leaveRoom();
+        this.netStage = 'menu';
+        this.netError = '';
+        return;
+      }
+      if (stage === 'code') {
+        this.netStage = 'menu';
+        return;
+      }
+      this.leaveRoom();
+      this.state = 'mode';
+      return;
+    }
+    if (stage === 'menu') {
+      if (id === 'way-tabs') { this.netWay = 'tabs'; return; }
+      if (id === 'way-online') { this.netWay = 'online'; return; }
+      if (id === 'host') { this.startHosting(); return; }
+      if (id === 'join') { this.netCode = ''; this.netStage = 'code'; return; }
+    }
+    if (stage === 'code') {
+      if (id === 'del') { this.netCode = this.netCode.slice(0, -1); return; }
+      if (id === 'go') { if (this.netCode.length === 4) this.startJoining(); return; }
+      if (CODE_KEYS.includes(id) && this.netCode.length < 4) { this.netCode += id; return; }
+    }
+    if (stage === 'room' && this.room) {
+      if (id === 'action') {
+        if (this.room.isHost) this.launchRoom();
+        else {
+          this.netReady = !this.netReady;
+          this.room.sendReady(this.netReady);
+        }
+        return;
+      }
+      if (id.startsWith('size') && this.room.isHost) {
+        this.squadSize = Number(id.slice(4));
+        this.room.setSize(this.squadSize);
+      }
+    }
   }
 
   /** Shared by every attract-style screen: keep the sky moving underneath. */
@@ -1081,9 +1341,19 @@ export class Game {
   }
 
   updatePlaying(dt) {
-    if (this.input.wasPressed('pause')) {
-      this.state = 'paused';
+    // A guest never simulates. It flies its own craft for the feel of it and
+    // draws everything else from what the host sends.
+    if (this.replica) {
+      this.updateReplica(dt);
       return;
+    }
+    if (this.input.wasPressed('pause')) {
+      // Pausing a game other people are in would freeze it for them, so a
+      // host pauses only when it is alone.
+      if (!this.hosting) {
+        this.state = 'paused';
+        return;
+      }
     }
     this.updateDebugControls();
 
@@ -1092,6 +1362,135 @@ export class Game {
     this.updateSpawning(dt);
     this.resolveCollisions();
     this.effects.update(dt);
+    if (this.room && this.room.isHost) this.room.hostTick(dt, this);
+  }
+
+  /**
+   * A guest's frame. Send the stick, move the local craft so it answers at
+   * once, and pull everything — the local craft included — towards the host's
+   * version of events.
+   */
+  updateReplica(dt) {
+    const room = this.room;
+    if (!room) {
+      this.replica = false;
+      return;
+    }
+    room.sendInput(this.input);
+    room.interp.advance(dt);
+    this.effects.update(dt);
+
+    const me = this.player;
+    if (me && me.alive) me.steer(dt, this.input);
+
+    const players = room.interp.players();
+    players.forEach((state, i) => {
+      const player = this.players[i];
+      if (!player) return;
+      if (state.craftId && player.craft.id !== state.craftId) player.setCraft(state.craftId);
+      player.hp = state.hp;
+      player.maxHp = player.craft.hp;
+      player.lives = state.lives;
+      player.alive = state.alive;
+      player.out = state.out;
+      player.boosting = state.boosting;
+      player.braking = state.braking;
+      player.invulnerable = state.invulnerable;
+      player.chute = state.downed
+        ? { timer: state.chuteTimer, window: 20, phase: this.time, drift: 0, fall: 0 }
+        : null;
+      if (i === this.localIndex && player.alive) {
+        // Prediction plus correction: snap only when the two have diverged
+        // beyond anything a player would read as their own flying.
+        const gap = distance(player.x, player.y, state.x, state.y);
+        if (gap > 260) {
+          player.x = state.x;
+          player.y = state.y;
+          player.angle = state.angle;
+        } else {
+          const pull = Math.min(1, dt * 4);
+          player.x += (state.x - player.x) * pull;
+          player.y += (state.y - player.y) * pull;
+        }
+        return;
+      }
+      player.x = state.x;
+      player.y = state.y;
+      player.angle = state.angle;
+    });
+
+    this.applyReplicaWorld(room.interp);
+  }
+
+  /** Rebuilds the drawable world from the interpolated snapshot. */
+  applyReplicaWorld(interp) {
+    const snap = interp.latest;
+    if (!snap) return;
+    this.eraIndex = snap.e;
+    this.kills = snap.k;
+    this.quota = snap.q;
+    this.score = snap.s;
+    this.squadRank = snap.r;
+    this.rankKills = snap.rk;
+    if (snap.st === 'gameover' && this.state === 'playing') this.state = 'gameover';
+
+    const era = this.era;
+    const seen = new Set();
+    this.enemies = interp.enemies().map((state) => {
+      seen.add(state.id);
+      let enemy = this.replicaEnemies.get(state.id);
+      if (!enemy) {
+        enemy = new Enemy({ x: state.x, y: state.y, angle: state.angle, era });
+        enemy.netId = state.id;
+        this.replicaEnemies.set(state.id, enemy);
+      }
+      enemy.era = era;
+      enemy.kind = era.enemy;
+      enemy.x = state.x;
+      enemy.y = state.y;
+      enemy.angle = state.angle;
+      enemy.hp = state.hp;
+      return enemy;
+    });
+    for (const id of [...this.replicaEnemies.keys()]) {
+      if (!seen.has(id)) this.replicaEnemies.delete(id);
+    }
+
+    const boss = interp.boss();
+    if (!boss) {
+      this.boss = null;
+    } else {
+      if (!this.boss) this.boss = new Boss({ x: boss.x, y: boss.y, angle: boss.angle, era });
+      this.boss.era = era;
+      this.boss.kind = era.boss;
+      this.boss.x = boss.x;
+      this.boss.y = boss.y;
+      this.boss.angle = boss.angle;
+      this.boss.hp = boss.hp;
+      this.boss.maxHp = boss.maxHp;
+    }
+
+    this.bullets = interp.bullets().map((state) => {
+      const bullet = new Bullet({
+        x: state.x, y: state.y, angle: state.angle, speed: 0, life: 1,
+        team: state.team, color: state.color, radius: state.radius,
+      });
+      bullet.homing = state.homing;
+      return bullet;
+    });
+
+    const extras = interp.extras();
+    this.flares = extras.flares.map((state) => {
+      const flare = new Flare(state.x, state.y, { radius: state.radius, life: 1 });
+      flare.maxLife = 1;
+      return flare;
+    });
+    this.parachutists = extras.parachutists.map((state) => {
+      const chute = new Parachutist(state.x, state.y);
+      chute.phase = state.phase;
+      return chute;
+    });
+    this.pickups = extras.pickups.map((state) => new ModulePickup(state.x, state.y, state.moduleId));
   }
 
   /**
@@ -1103,13 +1502,13 @@ export class Game {
     for (const player of this.players) {
       if (player.out) continue;
       if (player.alive) {
-        const wingman = player.local ? null : this.wingmen.find((w) => w.player === player);
-        player.update(dt, wingman ? wingman.control(dt, this) : this.input, this);
+        player.update(dt, this.controllerFor(player, dt), this);
         continue;
       }
       if (player.chute) {
-        // Wingmen just drift; only a person flies their own parachute.
-        player.updateChute(dt, player.local ? this.input : null);
+        // Wingmen just drift; a person — here or on another machine — flies
+        // their own parachute.
+        player.updateChute(dt, player.local ? this.input : (player.remote || null));
         if (player.chute.timer > 0) continue;
         this.losePilot(player);
         continue;
@@ -1129,6 +1528,32 @@ export class Game {
       this.stateTimer = 1.0;
       this.sfx.gameOver();
     }
+  }
+
+  /**
+   * Somebody's connection went away mid-flight. Their aircraft does not vanish
+   * and must not carry on flying the last stick position it was sent for ever;
+   * the AI takes the controls, the way it would have if nobody had joined.
+   */
+  releaseSeat(seat) {
+    const player = this.players[seat];
+    if (!player || player.local) return;
+    player.remote = null;
+    player.name = `P${seat + 1}`;
+    if (!this.wingmen.some((w) => w.player === player)) this.wingmen.push(new Wingman(player));
+  }
+
+  /** Whatever is flying this seat this frame: hands, AI, or a wire. */
+  controllerFor(player, dt) {
+    if (player.local) return this.input;
+    if (player.remote) return player.remote;
+    const wingman = this.wingmen.find((w) => w.player === player);
+    return wingman ? wingman.control(dt, this) : this.input;
+  }
+
+  /** True while this machine is the one running the simulation for others. */
+  get hosting() {
+    return Boolean(this.room && this.room.isHost && this.room.started);
   }
 
   /** Puts a craft back in, alongside the flight if there is any of it left. */

@@ -4,6 +4,7 @@ import { UI_DIM, UI_INK, UI_PANEL } from '../render/ui.js';
 import { drawDebug, drawHitboxes } from './debug.js';
 import { MODULES } from './gear.js';
 import { drawLoadout } from './loadout.js';
+import { drawLobby } from './lobby.js';
 import { drawModeSelect, drawSelect } from './selectscreen.js';
 
 const INK = UI_INK;
@@ -304,6 +305,10 @@ export function drawHud(ctx, game, cam) {
   }
   if (game.state === 'loadout') {
     drawLoadout(ctx, game, cam);
+    return;
+  }
+  if (game.state === 'lobby') {
+    drawLobby(ctx, game, cam);
     return;
   }
 

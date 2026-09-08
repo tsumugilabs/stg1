@@ -39,7 +39,14 @@ const MODULES = [
   'src/game/enemy.js',
   'src/game/boss.js',
   'src/game/parachutist.js',
+  'src/net/protocol.js',
+  'src/net/transport.js',
+  'src/net/remote.js',
+  'src/net/snapshot.js',
+  'src/net/room.js',
+  'src/net/link.js',
   'src/game/selectscreen.js',
+  'src/game/lobby.js',
   'src/game/loadout.js',
   'src/game/debug.js',
   'src/game/hud.js',
@@ -143,9 +150,21 @@ const html = await readFile(join(root, 'index.html'), 'utf8');
 const head = html.match(/<head>([\s\S]*?)<\/head>/)[1]
   .replace(/^\s*<meta[^>]*>\s*$/gm, '')
   .trim();
-const body = html.match(/<body>([\s\S]*?)<\/body>/)[1]
-  .replace(/<script[^>]*src="[^"]*"[^>]*><\/script>/, `<script type="module">\n${bundle}\n</script>`)
+// Only the module entry point becomes the bundle. Any other script tag — the
+// signalling library, for one — is left exactly where it is: an earlier
+// version of this matched the first src= it found, which quietly inlined the
+// bundle in place of the wrong tag and left main.js as a dangling reference.
+const ENTRY = /<script[^>]*type="module"[^>]*src="\.\/src\/main\.js"[^>]*><\/script>/;
+const rawBody = html.match(/<body>([\s\S]*?)<\/body>/)[1];
+if (!ENTRY.test(rawBody)) {
+  throw new Error('index.html no longer has the module entry point this build replaces');
+}
+const body = rawBody
+  .replace(ENTRY, `<script type="module">\n${bundle}\n</script>`)
   .trim();
+if (/<script[^>]*src="\.\//.test(body)) {
+  throw new Error('a local script survived bundling; the single file would not run standalone');
+}
 
 const fragment = `${head}\n${body}\n`;
 const standalone = `<!doctype html>

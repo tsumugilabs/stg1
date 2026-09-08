@@ -256,6 +256,26 @@ export class Player {
     return Math.min(rate, TURN_CEILING);
   }
 
+  /**
+   * Flying, and nothing else: turn, throttle, move. No guns, no timers.
+   *
+   * A guest predicts its own craft with this while the host remains the only
+   * thing that decides whether a shot was fired or a hit landed. Running the
+   * whole of update() on a guest would have it firing its own bullets, which
+   * the host has never heard of.
+   */
+  steer(dt, input) {
+    if (!this.alive) return;
+    this.updateBrake(dt, input);
+    this.updateBurner(dt, input);
+    const dir = input.direction();
+    if (dir) {
+      this.angle = turnToward(this.angle, Math.atan2(dir.y, dir.x), this.turnRate * dt);
+    }
+    this.x += Math.cos(this.angle) * this.speed * dt;
+    this.y += Math.sin(this.angle) * this.speed * dt;
+  }
+
   update(dt, input, game) {
     if (!this.alive) return;
     const craft = this.craft;
