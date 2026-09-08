@@ -160,12 +160,16 @@ export function drawLobby(ctx, game, cam) {
     const layout = game.lobbyBoxes;
     uiText(ctx, 'ONLINE SQUADRON', w / 2, h * 0.17, title, '#ffd166');
     uiText(ctx, '仲間と同じ空を飛ぶ', w / 2, h * 0.22, 14, UI_DIM);
+    uiText(ctx, 'ホストするとき、どちらで開くか', w / 2, h * 0.27 - 14, 12, UI_DIM);
     chip(ctx, layout.ways[0], '同じ端末の別タブ', { on: game.netWay === 'tabs' });
     chip(ctx, layout.ways[1], 'オンライン', { on: game.netWay === 'online' });
     uiText(ctx, game.netWay === 'tabs'
-      ? '同じブラウザで別タブを開いて参加します。1人で4席ためせます'
+      ? '同じブラウザの別タブだけが入れます。1人で4席ためせます'
       : '離れた相手と直接つなぎます (P2P)',
     w / 2, h * 0.27 + 62, 12, UI_DIM);
+    // Joining does not need the choice at all — it tries both.
+    uiText(ctx, '参加するときは自動でどちらか判別します',
+      w / 2, h * 0.27 + 80, 12, '#66809c');
     chip(ctx, layout.buttons[0], 'ホストする', { on: true, accent: '#ffd166' });
     chip(ctx, layout.buttons[1], '参加する', { on: true });
     chip(ctx, layout.back, 'もどる');
@@ -202,13 +206,17 @@ export function drawLobby(ctx, game, cam) {
   // --- the room itself ----------------------------------------------------
   const layout = game.lobbyBoxes;
   const room = game.room;
-  uiText(ctx, room && room.isHost ? 'あなたがホストです' : 'ルームに参加中',
-    w / 2, h * 0.13, Math.min(20, w / 38), UI_DIM);
+  const online = game.netWay === 'online';
+  const kind = room && room.isHost
+    ? (online ? 'オンラインで開いています' : '同じ端末の別タブ用に開いています')
+    : 'ルームに参加中';
+  uiText(ctx, kind, w / 2, h * 0.13, Math.min(20, w / 38),
+    room && room.isHost && !online ? '#ffb347' : UI_DIM);
   uiText(ctx, `CODE  ${game.netCode}`, w / 2, h * 0.21, Math.min(46, w / 16), '#ffd166');
   const link = game.linkState;
   const live = link === 'open';
   uiText(ctx, game.netWay === 'tabs'
-    ? 'このコードを別タブの「参加する」に入れてください'
+    ? 'このコードで入れるのは同じブラウザの別タブだけです'
     : (live ? '待機中 ・ このコードを友人に伝えてください'
       : (link === 'reconnecting' ? '再接続中... コードはまだ使えません'
         : '接続が切れています。「退出」してからホストし直してください')),
