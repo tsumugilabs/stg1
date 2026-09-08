@@ -114,6 +114,25 @@ export function hitButton(point, boxes) {
   return null;
 }
 
+/** Breaks a sentence over as many lines as it needs, on character bounds. */
+function wrapped(ctx, text, cx, y, maxWidth, size, color) {
+  ctx.save();
+  ctx.font = `bold ${size}px ui-monospace, Menlo, Consolas, monospace`;
+  const lines = [];
+  let line = '';
+  for (const char of text) {
+    if (ctx.measureText(line + char).width > maxWidth && line) {
+      lines.push(line);
+      line = '';
+    }
+    line += char;
+  }
+  if (line) lines.push(line);
+  ctx.restore();
+  lines.forEach((text2, i) => uiText(ctx, text2, cx, y + i * (size + 6), size, color));
+  return lines.length;
+}
+
 function chip(ctx, box, label, { on = false, dim = false, accent = '#7cf5ff' } = {}) {
   ctx.globalAlpha = on ? 0.9 : 0.45;
   ctx.fillStyle = on ? '#1d3a4d' : UI_PANEL;
@@ -168,7 +187,14 @@ export function drawLobby(ctx, game, cam) {
   if (stage === 'error' || stage === 'connecting') {
     uiText(ctx, stage === 'connecting' ? 'つないでいます...' : 'つながりませんでした',
       w / 2, h * 0.42, title, stage === 'connecting' ? UI_INK : '#ff8f8f');
-    if (game.netError) uiText(ctx, game.netError, w / 2, h * 0.42 + 34, 15, UI_DIM);
+    if (stage === 'connecting' && game.netStatus) {
+      uiText(ctx, game.netStatus, w / 2, h * 0.42 + 30, 14, UI_DIM);
+    }
+    // The reason, wrapped: these messages say what to do next, so cutting
+    // them off at the edge of the screen defeats the point of having them.
+    if (stage === 'error' && game.netError) {
+      wrapped(ctx, game.netError, w / 2, h * 0.42 + 34, Math.min(w * 0.82, 620), 15, UI_DIM);
+    }
     if (stage === 'error') chip(ctx, game.lobbyBoxes.back, 'もどる');
     return;
   }
@@ -179,10 +205,27 @@ export function drawLobby(ctx, game, cam) {
   uiText(ctx, room && room.isHost ? 'あなたがホストです' : 'ルームに参加中',
     w / 2, h * 0.13, Math.min(20, w / 38), UI_DIM);
   uiText(ctx, `CODE  ${game.netCode}`, w / 2, h * 0.21, Math.min(46, w / 16), '#ffd166');
+  const link = game.linkState;
+  const live = link === 'open';
   uiText(ctx, game.netWay === 'tabs'
     ? 'このコードを別タブの「参加する」に入れてください'
-    : 'このコードを友人に伝えてください',
-  w / 2, h * 0.21 + 30, 13, UI_DIM);
+    : (live ? '待機中 ・ このコードを友人に伝えてください'
+      : (link === 'reconnecting' ? '再接続中... コードはまだ使えません'
+        : '接続が切れています。「退出」してからホストし直してください')),
+  w / 2, h * 0.21 + 30, 13, live ? UI_DIM : '#ffb347');
+  if (!live) {
+    // A dot beside the code, because the sentence above is easy to skim past
+    // and the code itself is what everyone is looking at.
+    ctx.fillStyle = link === 'reconnecting' ? '#ffb347' : '#ff5a5a';
+    ctx.globalAlpha = 0.5 + Math.sin(game.time * 8) * 0.4;
+    ctx.beginPath();
+    ctx.arc(w / 2 - Math.min(46, w / 16) * 3.4, h * 0.21 - Math.min(46, w / 16) * 0.3, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  if (game.linkError) {
+    uiText(ctx, game.linkError, w / 2, h * 0.21 + 48, 12, '#ff8f8f');
+  }
 
   const slots = (room && room.slots) || [];
   layout.rows.forEach((box, i) => {
