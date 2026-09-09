@@ -3,6 +3,7 @@ import { Input } from './core/input.js';
 import { startLoop } from './core/loop.js';
 import { TouchControls } from './core/touch.js';
 import { Game } from './game/game.js';
+import { Room } from './net/room.js';
 import { drawEnemy } from './render/sprites.js';
 import { ERAS } from './game/levels.js';
 import { makePart, MODULES, RARITIES, rollModule } from './game/gear.js';
@@ -54,6 +55,12 @@ window.addEventListener('pointerdown', unlockAudio);
 // drawEnemy and ERAS are here so escort artwork can be rendered to a plate at
 // whatever scale you like, which is how the sprites get reviewed.
 window.game = game;
+// The classes themselves, so a headless check can stand a second game up and
+// wire the two together through a fake wire. Netcode that can only be tested
+// by two people on two phones does not get tested.
+window.Game = Game;
+window.Input = Input;
+window.Room = Room;
 window.__drawEnemy = drawEnemy;
 window.__eras = ERAS;
 window.__makePart = makePart;

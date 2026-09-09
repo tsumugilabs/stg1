@@ -26,7 +26,7 @@ import { beamEnd, distanceToSegment, drawBeam, Flare } from './weapons.js';
 import { cycleAt, difficultyAt, eraAt, ERAS, toughnessAt } from './levels.js';
 import { codeLayout, drawLobby, hitButton, menuLayout, roomLayout } from './lobby.js';
 import { Room } from '../net/room.js';
-import { INTERP_DELAY, readPlayer } from '../net/snapshot.js';
+import { readPlayer } from '../net/snapshot.js';
 import {
   hostOnline, hostOverTabs, joinOnline, joinOverTabs, makeCode, onlineAvailable,
 } from '../net/link.js';
@@ -73,12 +73,39 @@ const CROWD_HEADROOM = 2;
 const CODE_KEYS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 /** How far from the nearest craft a round survives before it is swept up. */
 const BULLET_RANGE = 1600;
+/** Predicted states kept to answer the host with: two seconds at 60Hz. */
+const PREDICTION_HISTORY = 120;
 /**
- * How far a guest's own craft may sit from where the host has it before
- * anything is done about it. Below this the prediction is simply right enough,
- * and correcting inside it is what made the controls feel heavy.
+ * How fast a genuine prediction error is fed back in. About a sixth of a
+ * second to absorb it: fast enough that the craft is never far wrong, slow
+ * enough that no single frame carries a visible step.
  */
-const PREDICTION_SLACK = 26;
+const CORRECTION_RATE = 6;
+/**
+ * The most of a frame's own movement a correction may be. The correction is
+ * the only thing in a guest's frame that can move the craft against its own
+ * flight, so this is what decides whether a bad moment on the line is felt at
+ * all: at a third, the craft can never drop below two thirds of its speed for
+ * a frame or overshoot by more than a third, whatever the wire has just done.
+ * A large error simply takes longer to absorb, which nobody can see.
+ */
+const CORRECTION_CEILING = 0.35;
+/**
+ * Where the ceiling starts to lift. Below this an error is absorbed at the
+ * gentle rate; above it the ceiling rises with the error, because on a line
+ * bad enough to open a gap this wide, being a long way from where the host has
+ * you is worse than a correction somebody might notice. Without this the
+ * ceiling could not keep up on the worst line and the error grew until the
+ * hard snap below fired, which is a teleport — the one thing this is all for
+ * avoiding.
+ */
+const CORRECTION_URGENT = 140;
+/** Errors smaller than this are left alone. Two machines stepping the same
+ *  craft never agree to the pixel, and chasing that is motion for nothing. */
+const CORRECTION_DEADZONE = 3;
+/** Past this the connection has lost the plot and the craft is simply put
+ *  where the host says it is. */
+const CORRECTION_SNAP = 400;
 /** How long the flight has to decide whether to put another coin in. */
 const CONTINUE_SECONDS = 10;
 
@@ -220,6 +247,14 @@ export class Game {
     // Things that happened this tick, for the guests. Cleared by each snapshot.
     this.netEvents = [];
     this.netPlayed = -1;
+    /** Guest: where this craft was after each input it sent, newest last. */
+    this.predicted = [];
+    /** Guest: prediction error still waiting to be fed back into position. */
+    this.drift = { x: 0, y: 0 };
+    /** Guest: the host clock of the last snapshot reconciled against. */
+    this.netSeen = -1;
+    /** Guest: how often the craft has had to be teleported into place. */
+    this.netSnaps = 0;
     this.netEye = null;
     this.continueTimer = 0;
     this.continues = 0;
@@ -1343,6 +1378,10 @@ export class Game {
       this.players[i].local = i === this.localIndex;
     }
     this.wingmen = [];
+    this.predicted.length = 0;
+    this.drift.x = 0;
+    this.drift.y = 0;
+    this.netSeen = -1;
     this.state = 'playing';
   }
 
@@ -1810,7 +1849,14 @@ export class Game {
     this.effects.update(dt);
 
     const me = this.player;
-    if (me && me.alive) me.steer(dt, this.input);
+    if (me && me.alive) {
+      me.steer(dt, this.input);
+      // Where this craft ended up having applied the input just sent. The
+      // host will answer for that same input by number, and comparing like
+      // with like is what makes the correction honest.
+      this.predicted.push({ seq: room.inputSeq, x: me.x, y: me.y });
+      if (this.predicted.length > PREDICTION_HISTORY) this.predicted.shift();
+    }
     const wasBoosting = me ? me.boosting : false;
     const wasBraking = me ? me.braking : false;
 
@@ -1851,34 +1897,7 @@ export class Game {
         : null;
       player.stranded = state.stranded;
       if (i === this.localIndex && player.alive) {
-        /*
-         * Your own craft is reconciled against the host's newest word, not
-         * against the interpolated past that everything else is drawn from.
-         *
-         * Correcting towards the interpolated position was pulling the craft
-         * back onto where it had been a tenth of a second ago, every frame.
-         * The prediction runs forward at full speed and the correction hauls
-         * it back, which settles at a permanent lag and feels like flying
-         * through treacle. Carrying the newest snapshot forward by the time it
-         * spent in transit, and leaving small errors alone entirely, gives the
-         * stick back its immediacy.
-         */
-        const latest = room.interp.latest;
-        const auth = latest && latest.p[i] ? readPlayer(latest.p[i]) : state;
-        const lead = INTERP_DELAY;
-        const ax = auth.x + Math.cos(auth.angle) * player.speed * lead;
-        const ay = auth.y + Math.sin(auth.angle) * player.speed * lead;
-        const gap = distance(player.x, player.y, ax, ay);
-        if (gap > 300) {
-          player.x = ax;
-          player.y = ay;
-          player.angle = auth.angle;
-        } else if (gap > PREDICTION_SLACK) {
-          // Only the part of the error that is past the slack, and gently.
-          const pull = Math.min(0.4, dt * 2.5) * ((gap - PREDICTION_SLACK) / gap);
-          player.x += (ax - player.x) * pull;
-          player.y += (ay - player.y) * pull;
-        }
+        this.reconcile(dt, player, room, i);
         // Boost and brake are this seat's own business; taking them from a
         // stale snapshot made the throttle flicker.
         player.boosting = wasBoosting;
@@ -1891,6 +1910,80 @@ export class Game {
     });
 
     this.applyReplicaWorld(room.interp);
+  }
+
+  /**
+   * Pull a guest's own craft back towards the host's version of it.
+   *
+   * The craft is flown locally so the stick answers at once, and the host is
+   * the one that decides where it really is; the two therefore disagree, and
+   * all of this is about disagreeing quietly.
+   *
+   * What matters is *what* the host's answer is compared against. It used to
+   * be compared against the craft's position now, with the host's last known
+   * state carried forward in a straight line to meet it. Two things were
+   * wrong with that. A craft in a turn is not going in a straight line, so the
+   * guess was worst exactly when the player was turning. And while the
+   * connection was stalled — which on a reliable channel is every single
+   * dropped packet, for a whole round trip — the craft kept flying while the
+   * host's last word stood still, so the invented gap grew and grew and the
+   * correction hauled the craft backwards the entire time. That is the stutter
+   * in a turn, and it was manufactured here rather than arriving over the wire.
+   *
+   * Now the host answers each input by number, and the error is measured
+   * against the position this craft predicted from that same input. No guess
+   * and no extrapolation, so a stalled connection produces no correction at
+   * all: nothing new has been said, so there is nothing new to answer for.
+   */
+  reconcile(dt, player, room, seat) {
+    const latest = room.interp.latest;
+    if (latest && latest.c !== this.netSeen) {
+      this.netSeen = latest.c;
+      const ack = latest.ak ? latest.ak[seat] : -1;
+      const auth = latest.p[seat] ? readPlayer(latest.p[seat]) : null;
+      let mine = null;
+      while (this.predicted.length && this.predicted[0].seq <= ack) {
+        mine = this.predicted.shift();
+      }
+      if (auth && mine && mine.seq === ack) {
+        this.drift.x += auth.x - mine.x;
+        this.drift.y += auth.y - mine.y;
+      }
+      if (auth && Math.hypot(this.drift.x, this.drift.y) > CORRECTION_SNAP) {
+        // Counted because a snap is a teleport, and one that is not a respawn
+        // is a fault: it means the correction could not keep up.
+        this.netSnaps += 1;
+        player.x = auth.x;
+        player.y = auth.y;
+        player.angle = auth.angle;
+        this.drift.x = 0;
+        this.drift.y = 0;
+        this.predicted.length = 0;
+        return;
+      }
+    }
+    const gap = Math.hypot(this.drift.x, this.drift.y);
+    if (gap < CORRECTION_DEADZONE) return;
+    const take = Math.min(1, dt * CORRECTION_RATE);
+    let dx = this.drift.x * take;
+    let dy = this.drift.y * take;
+    const step = Math.hypot(dx, dy);
+    const urgency = clamp((gap - CORRECTION_URGENT) / (CORRECTION_SNAP - CORRECTION_URGENT), 0, 1);
+    const ceiling = player.speed * dt * (CORRECTION_CEILING + urgency);
+    if (step > ceiling) {
+      dx *= ceiling / step;
+      dy *= ceiling / step;
+    }
+    player.x += dx;
+    player.y += dy;
+    this.drift.x -= dx;
+    this.drift.y -= dy;
+    // Anything the history has kept has to move with the craft, or the next
+    // answer would be measured against a position that no longer exists.
+    for (const past of this.predicted) {
+      past.x += dx;
+      past.y += dy;
+    }
   }
 
   /** Rebuilds the drawable world from the interpolated snapshot. */

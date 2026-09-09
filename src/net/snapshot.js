@@ -22,6 +22,20 @@ import { lerp } from '../core/math.js';
  */
 export const INTERP_DELAY = 0.07;
 
+/**
+ * The most a guest will fall behind to stay smooth. Two hundred milliseconds
+ * absorbed every modelled connection, five percent packet loss included, and
+ * nothing above it bought anything — so this is where the trade stops paying.
+ */
+export const MAX_INTERP_DELAY = 0.20;
+/**
+ * How many arrivals the delay is sized from: five seconds at 30Hz. Two
+ * seconds was too short — at one percent loss a stall happens about every
+ * three, so the window kept forgetting the last one and shrinking back down
+ * just in time for the next.
+ */
+const ARRIVAL_WINDOW = 150;
+
 export function encode(game) {
   const snap = {
     t: 'sn',
@@ -57,6 +71,13 @@ export function encode(game) {
         ])
         : 0,
     ])),
+    // The last input from each seat that this snapshot has acted on. A guest
+    // uses its own to find the state it predicted from that same input, which
+    // is the only honest thing to compare the host's answer against.
+    ak: game.players.map((_, i) => {
+      const controller = game.room ? game.room.controllerFor(i) : null;
+      return controller ? controller.seq : -1;
+    }),
     n: game.enemies.filter((enemy) => !enemy.dead).map((enemy) => ([
       enemy.netId,
       Math.round(enemy.x), Math.round(enemy.y),
@@ -126,26 +147,67 @@ function lerpAngle(a, b, t) {
  * than one that arrives a frame late.
  */
 export class Interpolator {
-  constructor() {
+  constructor({ delay = INTERP_DELAY, now = null } = {}) {
     this.buffer = [];
     this.clock = 0;
     this.latest = null;
+    /**
+     * How far behind the newest snapshot this draws. Instance state rather
+     * than a constant because the right answer is a property of the line, not
+     * of the game: seventy milliseconds is right on a clean connection and
+     * hopelessly thin on a lossy one.
+     */
+    this.delay = delay;
+    this.floor = delay;
+    this.now = now || (() => (typeof performance !== 'undefined'
+      ? performance.now() / 1000 : Date.now() / 1000));
+    this.arrivals = [];
+  }
+
+  /**
+   * Size the buffer to the line.
+   *
+   * Jitter on its own turned out to be harmless. What is not harmless is that
+   * a data channel is reliable and ordered: a lost packet is retransmitted,
+   * everything behind it waits, and then six snapshots land at once. With
+   * seventy milliseconds of buffer — barely two snapshots — one percent packet
+   * loss froze four percent of frames and produced single-frame jumps of eight
+   * times the normal step. That is the stutter, and it is worst in a turn
+   * because that is when a frozen craft is furthest from where it should be.
+   *
+   * Each arrival is timed against the host's clock. The offset between the two
+   * clocks is unknown but constant, so it cancels: only the spread matters,
+   * and the buffer has to cover the spread. It grows at once and shrinks
+   * slowly, because one quiet second is not evidence the line has healed.
+   */
+  measure(snap) {
+    const transit = this.now() - snap.c;
+    this.arrivals.push(transit);
+    while (this.arrivals.length > ARRIVAL_WINDOW) this.arrivals.shift();
+    if (this.arrivals.length < 8) return;
+    const best = Math.min(...this.arrivals);
+    const worst = Math.max(...this.arrivals);
+    const want = Math.min(MAX_INTERP_DELAY, Math.max(this.floor, worst - best + this.floor));
+    this.delay = want > this.delay ? want : this.delay + (want - this.delay) * 0.004;
+    // The decay only ever approaches the floor, so land on it.
+    if (this.delay - this.floor < 0.001) this.delay = this.floor;
   }
 
   push(snap) {
+    this.measure(snap);
     this.latest = snap;
     this.buffer.push(snap);
-    // Two to interpolate between plus a little history; more is memory for
-    // nothing, since anything older can never be asked for again.
-    while (this.buffer.length > 6) this.buffer.shift();
+    // Enough history to interpolate across a gap the size of the delay, plus
+    // a pair; anything older can never be asked for again.
+    while (this.buffer.length > 16) this.buffer.shift();
     // The guest's clock chases the host's, so a slow or fast tab converges
     // instead of drifting apart for ever.
-    if (this.clock === 0) this.clock = snap.c - INTERP_DELAY;
+    if (this.clock === 0) this.clock = snap.c - this.delay;
   }
 
   advance(dt) {
     if (!this.latest) return;
-    const target = this.latest.c - INTERP_DELAY;
+    const target = this.latest.c - this.delay;
     const drift = target - this.clock;
     // Nudge by up to 20%: a hard snap is a visible jump, and doing nothing is
     // a guest that falls further behind every second.

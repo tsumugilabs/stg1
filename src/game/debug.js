@@ -82,8 +82,16 @@ export function drawDebug(ctx, game, cam) {
     `e${game.enemies.length} b${game.bullets.length} p${game.pickups.length}`,
     `hp${game.player.hp}/${game.player.maxHp}`,
     `spd${Math.round(craft.speed)} trn${craft.turnRate.toFixed(2)} cd${craft.fireCooldown.toFixed(2)} x${craft.barrels.length}`,
-  ].join('  ');
-  uiText(ctx, line, 12, last.y + last.h + 20, 11, UI_DIM, 'left', 'normal');
+  ];
+  // A guest's line, so the two numbers that decide how smooth it looks can be
+  // read off a real phone instead of guessed at.
+  if (game.replica && game.room) {
+    line.push(`net ${Math.round(game.room.interp.delay * 1000)}ms`
+      + ` err${Math.round(Math.hypot(game.drift.x, game.drift.y))}`
+      + ` tp${game.netSnaps}`);
+  }
+  const text = line.join('  ');
+  uiText(ctx, text, 12, last.y + last.h + 20, 11, UI_DIM, 'left', 'normal');
 }
 
 /** Outlines every collision circle, which is the only way to see them. */
