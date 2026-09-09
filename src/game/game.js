@@ -1,5 +1,6 @@
 import { circlesOverlap, clamp, distance, randInt, randRange, TAU } from '../core/math.js';
 import { Background } from './background.js';
+import { Corridor } from './corridor.js';
 import { Boss } from './boss.js';
 import { Bullet } from './bullet.js';
 import { Effects } from './effects.js';
@@ -156,6 +157,10 @@ export class Game {
     this.sfx = sfx;
 
     this.background = new Background();
+    /** The canyon currently being flown, or null for open sky. */
+    this.corridor = null;
+    /** Wall contacts by the local craft this run, for judging the shape. */
+    this.scrapes = 0;
     this.effects = new Effects();
     this.players = [new Player()];
     this.localIndex = 0;
@@ -1568,6 +1573,9 @@ export class Game {
       case 'flagship':
         if (!this.boss) { this.kills = this.quota; this.spawnBoss(); }
         break;
+      case 'canyon':
+        if (this.corridor) { this.leaveCanyon(); this.startEra(); } else this.enterCanyon();
+        break;
       case 'part': {
         const part = makePart({ depth: this.eraIndex });
         this.locker.push(part);
@@ -1779,6 +1787,7 @@ export class Game {
     this.updateDebugControls();
 
     this.updatePlayers(dt);
+    if (this.corridor) this.scrapeWalls();
     this.updateWorld(dt);
     this.updateSpawning(dt);
     this.resolveCollisions();
@@ -2134,6 +2143,7 @@ export class Game {
     // host — and started working again the instant they respawned alongside
     // somebody. No amount of AI testing could find it: wingmen are leashed at
     // 330px and never go far enough.
+    if (this.corridor) this.stopRoundsInRock();
     this.bullets = this.bullets.filter(
       (b) => !b.dead && this.nearAnyPlayer(b.x, b.y, BULLET_RANGE),
     );
@@ -2164,8 +2174,91 @@ export class Game {
     }
   }
 
+  // --- canyon --------------------------------------------------------------
+
+  /**
+   * Drop the flight into a canyon run. A prototype entry point: it replaces
+   * the open sky with terrain in place, so the only thing being judged is
+   * whether flying a narrow slot is any good. Nothing else about the era
+   * changes, and leaving puts the era back exactly as it was.
+   */
+  enterCanyon(seed = randInt(1, 9999), shape = {}) {
+    this.corridor = new Corridor({ seed, heading: -Math.PI / 2, ...shape });
+    this.scrapes = 0;
+    this.enemies.length = 0;
+    this.bullets.length = 0;
+    this.pickups.length = 0;
+    this.flares.length = 0;
+    this.parachutists.length = 0;
+    this.boss = null;
+    this.effects.clear();
+    const mouth = this.corridor.entry;
+    this.players.forEach((player, i) => {
+      if (player.out) return;
+      const side = i % 2 === 0 ? 1 : -1;
+      const rank = Math.ceil(i / 2);
+      // Spread across the mouth rather than along it: the flight has to be
+      // inside the rock walls the moment the run starts.
+      player.reset(
+        mouth.x + Math.cos(mouth.angle + Math.PI / 2) * side * rank * 70,
+        mouth.y + Math.sin(mouth.angle + Math.PI / 2) * side * rank * 70,
+      );
+      player.angle = mouth.angle;
+    });
+    this.updateCamera();
+    this.state = 'playing';
+    this.showBanner('CANYON RUN', 2.2);
+  }
+
+  leaveCanyon() {
+    this.corridor = null;
+  }
+
+  /** How far down the canyon the local craft has come, 0..1. */
+  get canyonProgress() {
+    if (!this.corridor) return 0;
+    return this.corridor.progress(this.player.x, this.player.y);
+  }
+
+  /**
+   * Rock does not move, so a craft that flies into it is pushed back out along
+   * the shortest way and keeps whatever part of its motion ran parallel to the
+   * face. Scraping costs nothing but sparks for now: what the wall should
+   * really do to a craft is the question the prototype exists to answer, and
+   * making it fatal before anyone has flown the thing would settle it by
+   * accident.
+   */
+  scrapeWalls() {
+    for (const player of this.players) {
+      if (!player.flying) continue;
+      const depth = this.corridor.confine(player);
+      if (depth <= 0) continue;
+      if (player.local) this.scrapes += 1;
+      this.jolt(0.16, player.x, player.y);
+      this.effects.burst(player.x, player.y, {
+        count: 3, speed: 90, life: 0.22, size: 2, colors: ['#ffd166', '#ffe9b0'],
+      });
+    }
+  }
+
+  /** Gunfire stops at the rock, from either side. */
+  stopRoundsInRock() {
+    for (const bullet of this.bullets) {
+      if (bullet.dead) continue;
+      if (this.corridor.clearance(bullet.x, bullet.y) >= 0) continue;
+      bullet.dead = true;
+      this.effects.burst(bullet.x, bullet.y, {
+        count: 3, speed: 70, life: 0.2, size: 2, colors: ['#c9a37a', '#6d543d'],
+      });
+    }
+  }
+
   updateSpawning(dt) {
     if (this.boss) return;
+    // A canyon run has no escorts wandering in from the sides: nothing that
+    // steers towards a player would survive contact with the rock, so the
+    // opposition a corridor gets has to be built for it rather than borrowed.
+    if (this.corridor) return;
 
     this.spawnTimer -= dt;
     const era = this.era;
@@ -2416,6 +2509,7 @@ export class Game {
   render() {
     const ctx = this.ctx;
     this.background.draw(ctx, this.cam);
+    if (this.corridor) this.corridor.draw(ctx, this.cam);
 
     for (const chute of this.parachutists) chute.draw(ctx, this.cam);
     for (const pickup of this.pickups) pickup.draw(ctx, this.cam);

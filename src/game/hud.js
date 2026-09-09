@@ -363,13 +363,19 @@ export function drawHud(ctx, game, cam) {
     ctx.fillStyle = '#ff6b6b';
     ctx.fillRect(bx, h - 28, bw * clamp(game.boss.hp / game.boss.maxHp, 0, 1), 8);
   } else {
-    const progress = clamp(game.kills / game.quota, 0, 1);
+    // Down a canyon there is no kill quota to fill, so the bar measures the
+    // only thing that is actually advancing: how far along the run you are.
+    const canyon = Boolean(game.corridor);
+    const progress = canyon
+      ? game.canyonProgress
+      : clamp(game.kills / game.quota, 0, 1);
     const bw = 200;
     const bx = w / 2 - bw / 2;
-    label(ctx, 'FLAGSHIP', w / 2, h - 36, { size: 12, color: DIM, align: 'center' });
+    label(ctx, canyon ? 'CANYON' : 'FLAGSHIP', w / 2, h - 36,
+      { size: 12, color: DIM, align: 'center' });
     ctx.fillStyle = '#22344a';
     ctx.fillRect(bx, h - 28, bw, 6);
-    ctx.fillStyle = '#7cf5ff';
+    ctx.fillStyle = canyon ? '#ffd166' : '#7cf5ff';
     ctx.fillRect(bx, h - 28, bw * progress, 6);
   }
 

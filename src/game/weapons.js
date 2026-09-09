@@ -1,4 +1,4 @@
-import { TAU } from '../core/math.js';
+import { projectOnSegment, TAU } from '../core/math.js';
 
 /**
  * A flare, ejected on a timer, that burns any enemy round that comes near it.
@@ -58,13 +58,8 @@ export class Flare {
 
 /** Shortest distance from a point to the segment a->b. */
 export function distanceToSegment(px, py, ax, ay, bx, by) {
-  const dx = bx - ax;
-  const dy = by - ay;
-  const lengthSq = dx * dx + dy * dy;
-  if (lengthSq === 0) return Math.hypot(px - ax, py - ay);
-  let t = ((px - ax) * dx + (py - ay) * dy) / lengthSq;
-  t = Math.max(0, Math.min(1, t));
-  return Math.hypot(px - (ax + dx * t), py - (ay + dy * t));
+  const t = projectOnSegment(px, py, ax, ay, bx, by);
+  return Math.hypot(px - (ax + (bx - ax) * t), py - (ay + (by - ay) * t));
 }
 
 /** Where the beam ends: always past the edge of the view, whichever way it points. */

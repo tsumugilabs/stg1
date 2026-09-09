@@ -69,7 +69,11 @@ function handleResize() {
 window.addEventListener('resize', handleResize);
 window.addEventListener('orientationchange', handleResize);
 
-startLoop({
+// The stop handle is kept so the headless checks can take the wheel: a
+// measurement that has to run at sixty frames a second in real time can only
+// afford a couple of passes, and flying the same canyon a dozen ways is worth
+// more than flying it once at wall-clock speed.
+window.__stopLoop = startLoop({
   update(dt) {
     game.update(dt);
     input.endFrame();
@@ -78,3 +82,7 @@ startLoop({
     game.render();
   },
 });
+window.__step = (dt = 1 / 60) => {
+  game.update(dt);
+  input.endFrame();
+};

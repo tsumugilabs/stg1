@@ -32,6 +32,7 @@ const MODULES = [
   'src/game/weapons.js',
   'src/game/levels.js',
   'src/game/background.js',
+  'src/game/corridor.js',
   'src/game/bullet.js',
   'src/game/effects.js',
   'src/game/player.js',

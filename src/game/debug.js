@@ -18,6 +18,7 @@ export const DEBUG_ACTIONS = [
   { key: 'hitboxes', label: '判定', toggle: true },
   { key: 'nextEra', label: '次の面' },
   { key: 'flagship', label: '旗艦' },
+  { key: 'canyon', label: '渓谷' },
   { key: 'part', label: 'パーツ' },
   { key: 'module', label: 'モジュール' },
   { key: 'unlock', label: '全解放' },

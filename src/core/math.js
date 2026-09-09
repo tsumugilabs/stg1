@@ -45,6 +45,19 @@ export function distance(ax, ay, bx, by) {
   return Math.hypot(bx - ax, by - ay);
 }
 
+/**
+ * Where the nearest point to (px, py) sits along segment AB, as a fraction
+ * from 0 at A to 1 at B. The laser and the canyon walls both need this; the
+ * canyon also needs the fraction itself, to read the width off the run.
+ */
+export function projectOnSegment(px, py, ax, ay, bx, by) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lengthSq = dx * dx + dy * dy;
+  if (lengthSq === 0) return 0;
+  return clamp(((px - ax) * dx + (py - ay) * dy) / lengthSq, 0, 1);
+}
+
 /** Circle-vs-circle test for objects shaped like `{ x, y, radius }`. */
 export function circlesOverlap(a, b) {
   const reach = a.radius + b.radius;
