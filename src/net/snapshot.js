@@ -44,6 +44,18 @@ export function encode(game) {
       player.chute ? Math.round(player.chute.timer * 10) / 10 : 0,
       Math.round(player.invulnerable * 10) / 10,
       player.craft.id,
+      // What this craft has been fitted with. Without it a guest predicts its
+      // own flying from the bare airframe's numbers while the host uses the
+      // fitted ones, so the two disagree about speed and turn from the first
+      // promotion onwards.
+      player.modules.length ? player.modules : 0,
+      // Escort pods, flat: x, y, angle. They are placed by logic a guest does
+      // not run, so without this they sit where they were created.
+      player.pods.length
+        ? player.pods.flatMap((pod) => [
+          Math.round(pod.x), Math.round(pod.y), Math.round(pod.angle * 100) / 100,
+        ])
+        : 0,
     ])),
     n: game.enemies.filter((enemy) => !enemy.dead).map((enemy) => ([
       enemy.netId,
@@ -94,6 +106,8 @@ export function readPlayer(row) {
     chuteTimer: row[6],
     invulnerable: row[7],
     craftId: row[8],
+    modules: row[9] || [],
+    pods: row[10] || [],
   };
 }
 
