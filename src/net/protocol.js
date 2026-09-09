@@ -17,6 +17,12 @@ export const READY = 'rd';      // { t, on }
 export const INPUT = 'in';      // { t, n, d: [x, y] | null, h: bitmask }
 export const LEAVE = 'by';      // { t }
 export const WANT_ON = 'wc';    // { t } — put a coin in, from any seat
+/**
+ * Proof of life, sent on any screen where the guest is not flying. The host
+ * ages out a peer it has not heard from; without this, a guest is silent for
+ * as long as it takes to choose an aircraft.
+ */
+export const PING = 'pi';       // { t }
 
 /** Host to guest. */
 export const SEAT = 'st';       // { t, seat, size, name }

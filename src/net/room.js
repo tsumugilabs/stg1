@@ -1,5 +1,5 @@
 import {
-  CLOSED, HELLO, INPUT, LEAVE, LOBBY, PICK, READY, SEAT, SNAPSHOT, START,
+  CLOSED, HELLO, INPUT, LEAVE, LOBBY, PICK, PING, READY, SEAT, SNAPSHOT, START,
   WANT_ON, packDirection, packHeld,
 } from './protocol.js';
 import { RemoteController } from './remote.js';
@@ -28,6 +28,11 @@ import { encode, Interpolator } from './snapshot.js';
 export const SNAPSHOT_HZ = 30;
 /** A peer that has said nothing for this long is treated as gone. */
 export const TIMEOUT = 8;
+/**
+ * How often a guest that is not flying says so anyway. Three of these fit
+ * inside TIMEOUT, so it takes losing several in a row to be thrown out.
+ */
+export const PING_EVERY = 2.5;
 
 export class Room {
   constructor({ host, name = 'P1', size = 4 } = {}) {
@@ -48,6 +53,7 @@ export class Room {
     this.interp = new Interpolator();
     this.inputSeq = 0;
     this.quiet = 0;
+    this.sinceSend = 0;
     this.listeners = {};
     if (host) this.resetSlots();
   }
@@ -112,6 +118,11 @@ export class Room {
 
   fromPeer(peer, message) {
     if (!message || this.closed) return;
+    // Anything at all is proof the peer is still there. Counting only input
+    // meant a peer was only ever alive while flying: in the lobby, on the
+    // aircraft it was choosing, or in front of the continue prompt it sends
+    // nothing, and the ageing below threw it out mid-decision.
+    peer.silence = 0;
     switch (message.t) {
       case HELLO: {
         if (peer.seat !== -1) break;
@@ -144,7 +155,6 @@ export class Room {
         break;
       case INPUT:
         if (peer.controller) peer.controller.accept(message);
-        peer.silence = 0;
         break;
       case WANT_ON:
         // Anybody can put the coin in. Waiting on the host specifically would
@@ -259,7 +269,16 @@ export class Room {
    * went to sleep — sends no goodbye, so silence is the only signal there is.
    */
   guestTick(dt) {
-    if (this.isHost || this.closed || !this.started) return;
+    if (this.isHost || this.closed) return;
+    // A guest sends its stick sixty times a second while it is flying and
+    // nothing whatsoever on every other screen. The heartbeat covers those
+    // screens, so being in the lobby is not mistaken for being gone.
+    this.sinceSend += dt;
+    if (this.sinceSend >= PING_EVERY && this.link) {
+      this.sinceSend = 0;
+      this.link.send({ t: PING });
+    }
+    if (!this.started) return;
     this.quiet += dt;
     if (this.quiet <= TIMEOUT) return;
     this.closed = true;
@@ -319,6 +338,7 @@ export class Room {
   /** One frame of the guest's hands, on the wire. */
   sendInput(input) {
     if (!this.link || !this.started) return;
+    this.sinceSend = 0;
     this.inputSeq += 1;
     this.link.send({
       t: INPUT,
